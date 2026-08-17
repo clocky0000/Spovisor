@@ -13,7 +13,6 @@
 ├── 📄 batch.py           배치 스크립트 (장소 데이터 수집)
 ├── 📄 recommend.py       Flask API 서버
 ├── 📄 requirements.txt   필요 라이브러리
-├── 📄 .env.example       환경변수 예시
 └── 📄 .gitignore
 ```
 
@@ -124,7 +123,6 @@ python recommend.py
 
 ## 백엔드 연동 체크리스트
 
-- [ ] DB 테이블 4개 생성 (`backend_spec.docx` 참고)
 - [ ] `spots.json` → `spot_cache` 테이블 적재
 - [ ] `relations.json` → `spot_relation` 테이블 적재
 - [ ] `GET /spots/cache` API 오픈
