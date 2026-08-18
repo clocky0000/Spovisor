@@ -1,0 +1,35 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: spovisor-postgres
+    environment:
+      POSTGRES_DB: spovisor
+      POSTGRES_USER: spovisor
+      POSTGRES_PASSWORD: spovisor
+    ports:
+      - "55432:5432"
+    volumes:
+      - spovisor-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U spovisor -d spovisor"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  backend:
+    build:
+      context: ./backend
+    container_name: spovisor-backend
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/spovisor
+      DB_USERNAME: spovisor
+      DB_PASSWORD: spovisor
+      JWT_SECRET: change-this-local-secret-to-a-long-random-value-123456789
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  spovisor-postgres-data:
