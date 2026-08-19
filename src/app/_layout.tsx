@@ -8,6 +8,7 @@ import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect } from "react";
 import { useColorScheme } from "react-native";
+import "../global.css";
 
 // 폰트 로딩 중 스플래시 화면 유지
 SplashScreen.preventAutoHideAsync();

@@ -21,7 +21,6 @@ import {
   User,
   X
 } from 'lucide-react-native';
-import { router } from 'expo-router';
 import React, { useState } from 'react';
 import {
   Modal,
@@ -37,6 +36,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 // ─────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────
+
+type LoginScreenType = 'splash' | 'idLogin';
 
 type Sport = 'baseball' | 'soccer';
 type TabType = 'home' | 'course' | 'saved' | 'my';
@@ -235,6 +236,91 @@ const COLOR_OPTIONS: ColorOption[] = [
 ];
 
 // ─────────────────────────────────────────────────────────
+// Splash & Login Components (Pure StyleSheet)
+// ─────────────────────────────────────────────────────────
+
+function SplashScreen({ onLoginNavigate, onSkip }: { onLoginNavigate: () => void; onSkip: () => void; }) {
+  return (
+    <View style={styles.splashContainer}>
+      <View style={styles.splashLogoContainer}>
+        <View style={styles.splashLogoCircle}>
+          <Text style={{ fontSize: 60 }}>🏆</Text>
+        </View>
+        <Text style={styles.splashTitle}>스포바이저</Text>
+        <Text style={styles.splashDesc}>
+          경기장 여행의 시작,{"\n"}최적 코스를 한 번에
+        </Text>
+      </View>
+
+      <View style={styles.splashBtnContainer}>
+        <TouchableOpacity style={styles.splashPrimaryBtn} onPress={onLoginNavigate}>
+          <Text style={styles.splashPrimaryBtnText}>스포바이저 ID로 로그인하기</Text>
+        </TouchableOpacity>
+        
+        <View style={styles.splashSnsBox}>
+          <Text style={styles.splashSnsTitle}>SNS 간편 로그인</Text>
+          <View style={styles.splashSnsBtnRow}>
+            <TouchableOpacity style={styles.splashKakaoBtn} onPress={onSkip}>
+              <Text style={styles.splashKakaoText}>카카오</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.splashGoogleBtn} onPress={onSkip}>
+              <Text style={styles.splashGoogleText}>Google</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+
+      <TouchableOpacity style={styles.splashPreviewBtn} onPress={onSkip}>
+        <Text style={styles.splashPreviewText}>
+          스포바이저 미리보기 <Text style={styles.splashPreviewTextHighlight}>→ 체험하기</Text>
+        </Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+function IDLoginScreen({ onBack, onLoginSuccess }: { onBack: () => void; onLoginSuccess: () => void; }) {
+  const [id, setId] = useState("");
+  const [pw, setPw] = useState("");
+  return (
+    <View style={styles.loginContainer}>
+      <TouchableOpacity style={styles.loginBackBtn} onPress={onBack}>
+        <ArrowLeft size={18} color="#9CA3AF" />
+        <Text style={styles.loginBackText}>뒤로</Text>
+      </TouchableOpacity>
+      <Text style={styles.loginTitle}>로그인</Text>
+      <Text style={styles.loginDesc}>스포바이저 계정으로 로그인해주세요</Text>
+      
+      <TextInput 
+        style={styles.loginInput}
+        placeholder="아이디" 
+        value={id} 
+        onChangeText={setId} 
+        placeholderTextColor="#9CA3AF"
+      />
+      <TextInput 
+        style={[styles.loginInput, { marginBottom: 32 }]}
+        placeholder="비밀번호" 
+        secureTextEntry 
+        value={pw} 
+        onChangeText={setPw} 
+        placeholderTextColor="#9CA3AF"
+      />
+      
+      <TouchableOpacity style={styles.loginSubmitBtn} onPress={onLoginSuccess}>
+        <Text style={styles.loginSubmitText}>로그인</Text>
+      </TouchableOpacity>
+      
+      <View style={styles.loginLinksRow}>
+        <TouchableOpacity><Text style={styles.loginLinkText}>비밀번호 찾기</Text></TouchableOpacity>
+        <Text style={styles.loginLinkDivider}>|</Text>
+        <TouchableOpacity><Text style={styles.loginLinkHighlight}>회원가입</Text></TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
+// ─────────────────────────────────────────────────────────
 // Step Indicator Component
 // ─────────────────────────────────────────────────────────
 function StepIndicator({ current }: { current: number }) {
@@ -273,7 +359,7 @@ const stepStyles = StyleSheet.create({
 // Main Component
 // ─────────────────────────────────────────────────────────
 
-export default function MainApp() {
+export function MainApp({ onLogout }: { onLogout: () => void }) {
   const [tab, setTab] = useState<TabType>('home');
   const [flow, setFlow] = useState<FlowStep>('home');
   const [selectedDate, setSelectedDate] = useState<number>(29);
@@ -1257,7 +1343,7 @@ export default function MainApp() {
                 <View style={styles.myHeaderPurple}>
                   <View style={styles.rowBetween}>
                     <View style={styles.rowCenter}><Text style={{ fontSize: 18 }}>🏆</Text><Text style={{ fontSize: 18, fontWeight: '900', color: '#FFF' }}>스포바이저</Text></View>
-                    <TouchableOpacity onPress={() => router.replace('/auth')}><Text style={{ fontSize: 12, color: '#E0E7FF' }}>로그아웃</Text></TouchableOpacity>
+                    <TouchableOpacity onPress={onLogout}><Text style={{ fontSize: 12, color: '#E0E7FF' }}>로그아웃</Text></TouchableOpacity>
                   </View>
 
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16, marginTop: 16 }}>
@@ -1400,6 +1486,45 @@ export default function MainApp() {
           </TouchableOpacity>
         ))}
       </View>
+    </SafeAreaView>
+  );
+}
+
+// ─────────────────────────────────────────────────────────
+// App Container (로그인 토글 상태 관리)
+// ─────────────────────────────────────────────────────────
+
+export default function App() {
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [loginScreen, setLoginScreen] = useState<LoginScreenType>('splash');
+
+  const handleLoginSuccess = () => {
+    setIsLoggedIn(true);
+  };
+
+  const handleLogout = () => {
+    setIsLoggedIn(false);
+    setLoginScreen('splash');
+  };
+
+  if (isLoggedIn) {
+    return <MainApp onLogout={handleLogout} />;
+  }
+
+  return (
+    <SafeAreaView style={styles.flex1}>
+      {loginScreen === 'splash' && (
+        <SplashScreen 
+          onLoginNavigate={() => setLoginScreen('idLogin')} 
+          onSkip={handleLoginSuccess} 
+        />
+      )}
+      {loginScreen === 'idLogin' && (
+        <IDLoginScreen 
+          onBack={() => setLoginScreen('splash')} 
+          onLoginSuccess={handleLoginSuccess} 
+        />
+      )}
     </SafeAreaView>
   );
 }
@@ -1609,4 +1734,37 @@ const styles = StyleSheet.create({
   bottomTabBar: { flexDirection: 'row', height: 60, backgroundColor: '#FFFFFF', borderTopWidth: 1, borderTopColor: '#F1F5F9' },
   tabItem: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   tabLabel: { fontSize: 10, fontWeight: 'bold', marginTop: 2 },
+
+  // 로그인 화면 및 스플래시 스타일
+  splashContainer: { flex: 1, backgroundColor: '#312E81', justifyContent: 'center', paddingHorizontal: 32 },
+  splashLogoContainer: { alignItems: 'center', marginBottom: 40 },
+  splashLogoCircle: { width: 144, height: 144, borderRadius: 72, backgroundColor: '#3730A3', borderWidth: 8, borderColor: '#4338CA', alignItems: 'center', justifyContent: 'center', marginBottom: 24 },
+  splashTitle: { color: '#FFFFFF', fontSize: 30, fontWeight: '900', letterSpacing: -0.5, marginTop: 8 },
+  splashDesc: { color: '#C7D2FE', fontSize: 14, marginTop: 8, textAlign: 'center', lineHeight: 22 },
+  splashBtnContainer: { width: '100%', gap: 12 },
+  splashPrimaryBtn: { width: '100%', paddingVertical: 16, borderRadius: 100, backgroundColor: '#4F46E5', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  splashPrimaryBtnText: { color: '#FFFFFF', fontSize: 15, fontWeight: '900' },
+  splashSnsBox: { width: '100%', borderRadius: 16, padding: 16, backgroundColor: 'rgba(255,255,255,0.1)', marginTop: 8 },
+  splashSnsTitle: { color: 'rgba(255,255,255,0.5)', fontSize: 11, fontWeight: 'bold', textAlign: 'center', marginBottom: 12 },
+  splashSnsBtnRow: { flexDirection: 'row', gap: 12 },
+  splashKakaoBtn: { flex: 1, paddingVertical: 12, borderRadius: 12, backgroundColor: '#FEE500', alignItems: 'center' },
+  splashKakaoText: { color: '#374151', fontSize: 14, fontWeight: 'bold' },
+  splashGoogleBtn: { flex: 1, paddingVertical: 12, borderRadius: 12, backgroundColor: '#FFFFFF', alignItems: 'center' },
+  splashGoogleText: { color: '#1F2937', fontSize: 14, fontWeight: 'bold' },
+  splashPreviewBtn: { marginTop: 32, alignItems: 'center' },
+  splashPreviewText: { color: '#A5B4FC', fontSize: 14, fontWeight: 'bold' },
+  splashPreviewTextHighlight: { color: '#818CF8' },
+
+  loginContainer: { flex: 1, backgroundColor: '#FFFFFF', paddingHorizontal: 20, paddingTop: 16 },
+  loginBackBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 24, marginTop: 8 },
+  loginBackText: { color: '#6B7280', fontWeight: 'bold', fontSize: 14 },
+  loginTitle: { fontSize: 24, fontWeight: '900', color: '#111827', marginBottom: 8 },
+  loginDesc: { fontSize: 14, color: '#6B7280', marginBottom: 32 },
+  loginInput: { width: '100%', backgroundColor: '#F9FAFB', padding: 16, borderRadius: 12, marginBottom: 16, fontWeight: 'bold', color: '#111827' },
+  loginSubmitBtn: { width: '100%', paddingVertical: 16, borderRadius: 100, backgroundColor: '#4F46E5', alignItems: 'center', marginBottom: 24 },
+  loginSubmitText: { color: '#FFFFFF', fontSize: 15, fontWeight: '900' },
+  loginLinksRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 16 },
+  loginLinkText: { color: '#6B7280', fontWeight: 'bold', fontSize: 14 },
+  loginLinkDivider: { color: '#D1D5DB' },
+  loginLinkHighlight: { color: '#4F46E5', fontWeight: 'bold', fontSize: 14 },
 });
