@@ -21,8 +21,11 @@ import {
   User,
   X
 } from 'lucide-react-native';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import * as Location from 'expo-location';
 import {
+  ActivityIndicator,
+  Alert,
   Modal,
   ScrollView,
   StyleSheet,
@@ -31,7 +34,30 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+
+import {
+  changePassword,
+  clearAuthSession,
+  createTrip,
+  deleteMyAccount,
+  deleteSavedCourse,
+  getMyProfile,
+  listSavedCourses,
+  listTrips,
+  loadAuthSession,
+  saveAuthSession,
+  saveCourse,
+  saveUserSurvey,
+  searchSpots,
+  submitTripFeedback,
+  updateMyProfile,
+  type SavedCourse,
+  type SpotSearchResult,
+  type Trip,
+  type UserProfile,
+} from '../lib/api';
 
 // ─────────────────────────────────────────────────────────
 // Types
@@ -117,6 +143,40 @@ interface ColorOption {
   name: string;
   hex: string;
 }
+
+const CONCEPT_PREVIEWS: Record<string, {
+  emoji: string;
+  ratios: { label: string; value: string; color: string }[];
+  summary: string;
+}> = {
+  '미식 탐방형': {
+    emoji: '🍜',
+    summary: '로컬 맛집과 인기 식당 중심으로 추천해요.',
+    ratios: [
+      { label: '맛집', value: '60%', color: '#F59E0B' },
+      { label: '관광지', value: '25%', color: '#5B44E8' },
+      { label: '카페', value: '15%', color: '#10B981' },
+    ],
+  },
+  '관광지 중심형': {
+    emoji: '🗺️',
+    summary: '대표 관광지와 랜드마크를 우선해서 추천해요.',
+    ratios: [
+      { label: '관광지', value: '60%', color: '#5B44E8' },
+      { label: '맛집', value: '25%', color: '#F59E0B' },
+      { label: '카페', value: '15%', color: '#10B981' },
+    ],
+  },
+  '로컬 힐링형': {
+    emoji: '🌿',
+    summary: '한적하고 여유로운 장소를 중심으로 추천해요.',
+    ratios: [
+      { label: '힐링·자연', value: '50%', color: '#10B981' },
+      { label: '카페', value: '30%', color: '#0EA5E9' },
+      { label: '맛집', value: '20%', color: '#F59E0B' },
+    ],
+  },
+};
 
 // ─────────────────────────────────────────────────────────
 // Mock Data
@@ -359,9 +419,22 @@ const stepStyles = StyleSheet.create({
 // Main Component
 // ─────────────────────────────────────────────────────────
 
-export function MainApp({ onLogout }: { onLogout: () => void }) {
+export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initialUser: UserProfile }) {
   const [tab, setTab] = useState<TabType>('home');
   const [flow, setFlow] = useState<FlowStep>('home');
+  const [profile, setProfile] = useState<UserProfile>(initialUser);
+  const [savedCourses, setSavedCourses] = useState<SavedCourse[]>([]);
+  const [tripList, setTripList] = useState<Trip[]>([]);
+  const [currentTripId, setCurrentTripId] = useState<number | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isNicknameModalOpen, setIsNicknameModalOpen] = useState(false);
+  const [nicknameDraft, setNicknameDraft] = useState(initialUser.nickname);
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+  const [currentPasswordDraft, setCurrentPasswordDraft] = useState('');
+  const [newPasswordDraft, setNewPasswordDraft] = useState('');
+  const [origin, setOrigin] = useState('');
+  const [originCoordinates, setOriginCoordinates] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [isLocating, setIsLocating] = useState(false);
   const [selectedDate, setSelectedDate] = useState<number>(29);
   const [selectedGame, setSelectedGame] = useState<Game | null>(GAMES[1]);
 
@@ -380,9 +453,14 @@ export function MainApp({ onLogout }: { onLogout: () => void }) {
 
   const [concept, setConcept] = useState<string>('미식 탐방형');
   const [extras, setExtras] = useState<string[]>(['실내 선호', '혼잡 피하기', '페이링 가능']);
+  const [placeQuery, setPlaceQuery] = useState('');
+  const [placeResults, setPlaceResults] = useState<SpotSearchResult[]>([]);
+  const [isSearchingPlaces, setIsSearchingPlaces] = useState(false);
+  const [fixedPlaces, setFixedPlaces] = useState<SpotSearchResult[]>([]);
 
   // Course States
-  const [courses, setCourses] = useState<Course[]>(MOCK_COURSES);
+  // AI 모델 연동 전까지는 추천 결과를 비워둡니다.
+  const [courses, setCourses] = useState<Course[]>([]);
   const [selectedCourse, setSelectedCourse] = useState<Course>(MOCK_COURSES[0]);
   const [expandedCourseId, setExpandedCourseId] = useState<number | null>(1);
   const [selectedPreset, setSelectedPreset] = useState<PresetCourse>(PRESET_COURSES[0]);
@@ -394,11 +472,47 @@ export function MainApp({ onLogout }: { onLogout: () => void }) {
   const [visitedSpotIds, setVisitedSpotIds] = useState<number[]>([102, 103, 105]);
 
   // Mascot Customization
-  const [selectedMascot, setSelectedMascot] = useState<MascotOption>(MASCOTS[0]);
-  const [selectedBgColor, setSelectedBgColor] = useState<ColorOption>(COLOR_OPTIONS[0]);
+  const [selectedMascot, setSelectedMascot] = useState<MascotOption>(() => MASCOTS.find((item) => item.id === initialUser.mascot) ?? MASCOTS[0]);
+  const [selectedBgColor, setSelectedBgColor] = useState<ColorOption>(() => COLOR_OPTIONS.find((item) => item.hex.toLowerCase() === (initialUser.themeColor ?? '').toLowerCase()) ?? COLOR_OPTIONS[0]);
 
   // Step 5 Exclude Filter
   const [excludeFilters, setExcludeFilters] = useState<string[]>([]);
+
+  useEffect(() => {
+    Promise.all([listSavedCourses(), listTrips()]).then(([saved, trips]) => {
+      setSavedCourses(saved);
+      setTripList(trips);
+    }).catch(() => {
+      // 첫 실행에서 빈 목록은 정상입니다.
+    });
+  }, []);
+
+  useEffect(() => {
+    const query = placeQuery.trim();
+    if (query.length < 2) {
+      setPlaceResults([]);
+      setIsSearchingPlaces(false);
+      return;
+    }
+
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setIsSearchingPlaces(true);
+      try {
+        const results = await searchSpots(query);
+        if (!cancelled) setPlaceResults(results);
+      } catch {
+        if (!cancelled) setPlaceResults([]);
+      } finally {
+        if (!cancelled) setIsSearchingPlaces(false);
+      }
+    }, 300);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [placeQuery]);
 
   const toggleExtraCompanion = (item: string) => {
     setExtraCompanion((prev) =>
@@ -418,10 +532,159 @@ export function MainApp({ onLogout }: { onLogout: () => void }) {
     );
   };
 
+  const handleUseCurrentLocation = async () => {
+    setIsLocating(true);
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (permission.status !== Location.PermissionStatus.GRANTED) {
+        Alert.alert('위치 권한 필요', '현재 위치를 출발지로 사용하려면 위치 권한을 허용해주세요.');
+        return;
+      }
+
+      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const { latitude, longitude } = position.coords;
+      setOriginCoordinates({ latitude, longitude });
+      setOrigin(`현재 위치 (${latitude.toFixed(4)}, ${longitude.toFixed(4)})`);
+
+      try {
+        const addresses = await Location.reverseGeocodeAsync({ latitude, longitude });
+        const address = addresses[0];
+        const label = [address?.district, address?.city, address?.street].filter(Boolean).join(' ');
+        if (label) setOrigin(label);
+      } catch {
+        // 좌표만으로도 AI 서버가 출발지를 처리할 수 있으므로 주소 변환 실패는 무시합니다.
+      }
+    } catch {
+      Alert.alert('현재 위치 확인 실패', '위치를 확인하지 못했습니다. 출발지를 직접 입력해주세요.');
+    } finally {
+      setIsLocating(false);
+    }
+  };
+
+  const addFixedPlace = (place: SpotSearchResult) => {
+    if (fixedPlaces.some((item) => item.contentId === place.contentId)) return;
+    setFixedPlaces((previous) => [...previous, place]);
+    setPlaceQuery('');
+    setPlaceResults([]);
+  };
+
   const toggleVisitSpot = (spotId: number) => {
     setVisitedSpotIds((prev) =>
       prev.includes(spotId) ? prev.filter((id) => id !== spotId) : [...prev, spotId]
     );
+  };
+
+  const buildSurvey = () => ({
+    stadium: selectedGame?.stadium ?? '수원 KT위즈파크',
+    gameDate: selectedGame?.date ?? '2026-06-29',
+    gameStartTime: startTime,
+    arrivalTime,
+    travelTiming: tripTiming,
+    origin,
+    transport,
+    maxTravelTime: maxTime,
+    walkingDistance: walkDist,
+    companion,
+    extraCompanion,
+    concept,
+    extras,
+    originCoordinates,
+    fixedPlaces: fixedPlaces.map((place) => ({
+      contentId: place.contentId,
+      name: place.name,
+      category: place.category,
+      latitude: place.latitude,
+      longitude: place.longitude,
+    })),
+    excludedConditions: excludeFilters,
+  });
+
+  const handleCreateCourseRequest = async () => {
+    setIsSubmitting(true);
+    try {
+      await saveUserSurvey(buildSurvey());
+      setCourses([]);
+      setFlow('courseList');
+    } catch (error) {
+      Alert.alert('설문 저장 실패', error instanceof Error ? error.message : '설문을 저장하지 못했습니다.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleSaveCurrentCourse = async () => {
+    setIsSubmitting(true);
+    try {
+      const saved = await saveCourse({ title: selectedCourse.title, stadium: selectedGame?.stadium, courseType: selectedCourse.conceptTag, course: selectedCourse });
+      setSavedCourses((previous) => [saved, ...previous]);
+      Alert.alert('저장 완료', '코스를 저장했습니다.');
+    } catch (error) {
+      Alert.alert('저장 실패', error instanceof Error ? error.message : '코스를 저장하지 못했습니다.');
+    } finally { setIsSubmitting(false); }
+  };
+
+  const handleConfirmTrip = async () => {
+    setIsSubmitting(true);
+    try {
+      const trip = await createTrip({
+        stadium: selectedGame?.stadium ?? '수원 KT위즈파크',
+        matchName: selectedGame ? `${selectedGame.home} vs ${selectedGame.away}` : undefined,
+        tripDate: selectedGame?.date,
+        courseTitle: selectedCourse.title,
+      });
+      setCurrentTripId(trip.id);
+      setTripList((previous) => [trip, ...previous]);
+      setFlow('feedbackReview');
+    } catch (error) {
+      Alert.alert('여행 기록 실패', error instanceof Error ? error.message : '여행 기록을 저장하지 못했습니다.');
+    } finally { setIsSubmitting(false); }
+  };
+
+  const handleSubmitFeedback = async () => {
+    if (!currentTripId) { setFlow('feedbackDone'); return; }
+    setIsSubmitting(true);
+    try {
+      const updated = await submitTripFeedback(currentTripId, starRating, visitedSpotIds);
+      setTripList((previous) => previous.map((trip) => trip.id === updated.id ? updated : trip));
+      setFlow('feedbackDone');
+    } catch (error) {
+      Alert.alert('피드백 실패', error instanceof Error ? error.message : '피드백을 저장하지 못했습니다.');
+    } finally { setIsSubmitting(false); }
+  };
+
+  const handleProfileSave = async (changes: { nickname?: string; mascot?: string; themeColor?: string }) => {
+    setIsSubmitting(true);
+    try {
+      const updated = await updateMyProfile(changes);
+      setProfile(updated);
+      await saveAuthSession({ ...updated, accessToken: initialUser.accessToken });
+      setIsNicknameModalOpen(false);
+      setIsPasswordModalOpen(false);
+    } catch (error) {
+      Alert.alert('프로필 수정 실패', error instanceof Error ? error.message : '프로필을 수정하지 못했습니다.');
+    } finally { setIsSubmitting(false); }
+  };
+
+  const handlePasswordSave = async () => {
+    if (newPasswordDraft.length < 8) { Alert.alert('비밀번호 확인', '새 비밀번호는 8자 이상이어야 합니다.'); return; }
+    setIsSubmitting(true);
+    try {
+      await changePassword(currentPasswordDraft, newPasswordDraft);
+      setCurrentPasswordDraft(''); setNewPasswordDraft(''); setIsPasswordModalOpen(false);
+      Alert.alert('변경 완료', '비밀번호를 변경했습니다.');
+    } catch (error) {
+      Alert.alert('변경 실패', error instanceof Error ? error.message : '비밀번호를 변경하지 못했습니다.');
+    } finally { setIsSubmitting(false); }
+  };
+
+  const handleDeleteAccount = () => {
+    Alert.alert('회원탈퇴', '계정과 저장된 데이터를 모두 삭제할까요?', [
+      { text: '취소', style: 'cancel' },
+      { text: '삭제', style: 'destructive', onPress: async () => {
+        try { await deleteMyAccount(); await clearAuthSession(); onLogout(); }
+        catch (error) { Alert.alert('탈퇴 실패', error instanceof Error ? error.message : '계정을 삭제하지 못했습니다.'); }
+      } },
+    ]);
   };
 
   return (
@@ -604,15 +867,15 @@ export function MainApp({ onLogout }: { onLogout: () => void }) {
                   <Text style={styles.inputLabel}>출발지</Text>
                   <View style={styles.readOnlyInput}>
                     <Navigation size={15} color="#5B44E8" />
-                    <TextInput style={{ flex: 1, fontSize: 14 }} placeholder="예) 수원역, 강남역, 집" />
+                    <TextInput value={origin} onChangeText={(value) => { setOrigin(value); setOriginCoordinates(null); }} style={{ flex: 1, fontSize: 14 }} placeholder="출발지를 검색하거나 현재 위치를 사용하세요" />
                   </View>
 
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                    {['📍 수원역', '📍 강남역', '📍 잠실역', '📍 홍대입구역'].map((loc) => (
-                      <View key={loc} style={styles.locationChip}>
-                        <Text style={{ fontSize: 12, color: '#374151', fontWeight: 'bold' }}>{loc}</Text>
-                      </View>
-                    ))}
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    <TouchableOpacity style={[styles.locationActionBtn, isLocating && { opacity: 0.6 }]} onPress={handleUseCurrentLocation} disabled={isLocating}>
+                      {isLocating ? <ActivityIndicator size="small" color="#5B44E8" /> : <Navigation size={14} color="#5B44E8" />}
+                      <Text style={styles.locationActionText}>{isLocating ? '위치 확인 중...' : '현재 위치 사용'}</Text>
+                    </TouchableOpacity>
+                    {originCoordinates && <View style={styles.locationVerified}><Check size={13} color="#059669" /><Text style={styles.locationVerifiedText}>GPS 위치 선택됨</Text></View>}
                   </View>
 
                   <Text style={styles.inputLabel}>이동수단 (복수 선택 가능)</Text>
@@ -767,17 +1030,18 @@ export function MainApp({ onLogout }: { onLogout: () => void }) {
                   <View style={styles.previewCard}>
                     <Text style={{ fontSize: 11, color: '#6B7280', fontWeight: 'bold', marginBottom: 8 }}>선택된 컨셉 미리보기</Text>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
-                      <Text style={{ fontSize: 18 }}>🍜</Text>
-                      <Text style={{ fontWeight: '900', fontSize: 15 }}>미식 탐방형</Text>
+                      <Text style={{ fontSize: 18 }}>{CONCEPT_PREVIEWS[concept].emoji}</Text>
+                      <Text style={{ fontWeight: '900', fontSize: 15 }}>{concept}</Text>
                       {extras.map((e) => (
                         <View key={e} style={styles.previewTag}><Text style={{ fontSize: 10, color: '#5B44E8', fontWeight: 'bold' }}>{e}</Text></View>
                       ))}
                     </View>
+                    <Text style={{ fontSize: 11, color: '#6B7280', marginBottom: 10 }}>{CONCEPT_PREVIEWS[concept].summary}</Text>
 
                     <View style={{ flexDirection: 'row', gap: 8 }}>
-                      <View style={styles.ratioBox}><Text style={styles.ratioSub}>맛집</Text><Text style={[styles.ratioMain, { color: '#F59E0B' }]}>60%</Text></View>
-                      <View style={styles.ratioBox}><Text style={styles.ratioSub}>관광지</Text><Text style={[styles.ratioMain, { color: '#5B44E8' }]}>25%</Text></View>
-                      <View style={styles.ratioBox}><Text style={styles.ratioSub}>카페</Text><Text style={[styles.ratioMain, { color: '#10B981' }]}>15%</Text></View>
+                      {CONCEPT_PREVIEWS[concept].ratios.map((ratio) => (
+                        <View key={ratio.label} style={styles.ratioBox}><Text style={styles.ratioSub}>{ratio.label}</Text><Text style={[styles.ratioMain, { color: ratio.color }]}>{ratio.value}</Text></View>
+                      ))}
                     </View>
                   </View>
                 </ScrollView>
@@ -803,28 +1067,41 @@ export function MainApp({ onLogout }: { onLogout: () => void }) {
                   <View style={{ flexDirection: 'row', gap: 8 }}>
                     <View style={styles.placeInputBox}>
                       <Coffee size={14} color="#9CA3AF" />
-                      <TextInput style={{ flex: 1, fontSize: 13 }} placeholder="장소명을 입력해주세요" />
+                      <TextInput value={placeQuery} onChangeText={setPlaceQuery} style={{ flex: 1, fontSize: 13 }} placeholder="장소명을 입력해주세요" returnKeyType="search" />
                     </View>
-                    <TouchableOpacity style={styles.addBtn}><Text style={styles.addBtnText}>+ 추가</Text></TouchableOpacity>
+                    <TouchableOpacity style={[styles.addBtn, (!placeResults[0] || isSearchingPlaces) && { opacity: 0.5 }]} onPress={() => placeResults[0] && addFixedPlace(placeResults[0])} disabled={!placeResults[0] || isSearchingPlaces}>
+                      <Text style={styles.addBtnText}>+ 추가</Text>
+                    </TouchableOpacity>
                   </View>
 
-                  <View style={styles.placeItemCard}>
-                    <View style={[styles.numBadge, { backgroundColor: '#F59E0B' }]}><Text style={styles.numBadgeText}>1</Text></View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ fontWeight: 'bold', fontSize: 14 }}>효뜨 스타필드 수원점</Text>
-                      <Text style={{ color: '#6B7280', fontSize: 11, marginTop: 2 }}>음식점 · 수원 KT위즈파크 근처</Text>
+                  {isSearchingPlaces && <ActivityIndicator color="#5B44E8" />}
+                  {!isSearchingPlaces && placeQuery.trim().length >= 2 && placeResults.length === 0 && <Text style={styles.placeHint}>검색 결과가 없습니다. 다른 장소명을 입력해보세요.</Text>}
+                  {placeResults.length > 0 && (
+                    <View style={styles.placeResultsBox}>
+                      {placeResults.map((place) => (
+                        <TouchableOpacity key={place.contentId} style={styles.placeResultRow} onPress={() => addFixedPlace(place)}>
+                          <View style={styles.placeResultIcon}><MapIcon size={14} color="#5B44E8" /></View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ fontWeight: '800', fontSize: 13 }}>{place.name}</Text>
+                            <Text style={styles.placeResultMeta}>{place.category || '관광지'} · 검색 결과에서 선택</Text>
+                          </View>
+                          <Text style={styles.placeSelectText}>선택</Text>
+                        </TouchableOpacity>
+                      ))}
                     </View>
-                    <TouchableOpacity style={styles.closeCircle}><X size={12} color="#6B7280" /></TouchableOpacity>
-                  </View>
+                  )}
 
-                  <View style={styles.placeItemCard}>
-                    <View style={[styles.numBadge, { backgroundColor: '#10B981' }]}><Text style={styles.numBadgeText}>2</Text></View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ fontWeight: 'bold', fontSize: 14 }}>행궁동 카페게리</Text>
-                      <Text style={{ color: '#6B7280', fontSize: 11, marginTop: 2 }}>카페 · 수원 화성 행궁 인근</Text>
+                  {fixedPlaces.length === 0 && <Text style={styles.placeHint}>장소명을 입력하면 관광공사 장소 데이터에서 검색할 수 있어요.</Text>}
+                  {fixedPlaces.map((place, index) => (
+                    <View key={place.contentId} style={styles.placeItemCard}>
+                      <View style={[styles.numBadge, { backgroundColor: index % 2 === 0 ? '#F59E0B' : '#10B981' }]}><Text style={styles.numBadgeText}>{index + 1}</Text></View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontWeight: 'bold', fontSize: 14 }}>{place.name}</Text>
+                        <Text style={{ color: '#6B7280', fontSize: 11, marginTop: 2 }}>{place.category || '관광지'} · 추천 조건에 포함</Text>
+                      </View>
+                      <TouchableOpacity style={styles.closeCircle} onPress={() => setFixedPlaces((previous) => previous.filter((item) => item.contentId !== place.contentId))}><X size={12} color="#6B7280" /></TouchableOpacity>
                     </View>
-                    <TouchableOpacity style={styles.closeCircle}><X size={12} color="#6B7280" /></TouchableOpacity>
-                  </View>
+                  ))}
 
                   <View style={{ marginTop: 12, borderTopWidth: 1, borderTopColor: '#F1F5F9', paddingTop: 16 }}>
                     <Text style={{ fontSize: 12, color: '#9CA3AF', textAlign: 'center', marginBottom: 12 }}>제외 조건</Text>
@@ -843,8 +1120,10 @@ export function MainApp({ onLogout }: { onLogout: () => void }) {
                 </ScrollView>
 
                 <View style={styles.footer}>
-                  <TouchableOpacity style={styles.purpleBtn} onPress={() => setFlow('courseList')}><Text style={styles.purpleBtnText}>코스 만들기</Text></TouchableOpacity>
-                  <TouchableOpacity onPress={() => setFlow('courseList')} style={{ alignItems: 'center', marginTop: 10 }}>
+                  <TouchableOpacity style={[styles.purpleBtn, isSubmitting && { opacity: 0.6 }]} onPress={handleCreateCourseRequest} disabled={isSubmitting}>
+                    {isSubmitting ? <ActivityIndicator color="#FFF" /> : <Text style={styles.purpleBtnText}>코스 만들기</Text>}
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={handleCreateCourseRequest} style={{ alignItems: 'center', marginTop: 10 }} disabled={isSubmitting}>
                     <Text style={{ color: '#6B7280', fontSize: 13 }}>건너뛰기</Text>
                   </TouchableOpacity>
                 </View>
@@ -869,6 +1148,14 @@ export function MainApp({ onLogout }: { onLogout: () => void }) {
                 </View>
 
                 <ScrollView style={styles.flex1} contentContainerStyle={{ padding: 20, gap: 16 }}>
+                  {courses.length === 0 && (
+                    <View style={styles.aiEmptyCard}>
+                      <Text style={{ fontSize: 34 }}>✨</Text>
+                      <Text style={{ fontSize: 17, fontWeight: '900', color: '#312E81', marginTop: 12 }}>AI 추천 코스를 준비 중이에요</Text>
+                      <Text style={{ fontSize: 12, color: '#6B7280', textAlign: 'center', lineHeight: 19, marginTop: 8 }}>설문은 저장되었습니다. AI 모델 서버가 연결되면 이 화면에서 추천 코스 3개를 받아볼 수 있어요.</Text>
+                      <TouchableOpacity style={[styles.purpleBtn, { width: '100%', marginTop: 18 }]} onPress={() => setFlow('home')}><Text style={styles.purpleBtnText}>홈으로 돌아가기</Text></TouchableOpacity>
+                    </View>
+                  )}
                   {courses.map((course) => {
                     const isExpanded = expandedCourseId === course.id;
                     const isA = course.code === 'A';
@@ -983,7 +1270,7 @@ export function MainApp({ onLogout }: { onLogout: () => void }) {
 
                 <View style={styles.footer}>
                   <TouchableOpacity style={styles.purpleBtn} onPress={() => setFlow('mapView')}><Text style={styles.purpleBtnText}>🗺️ 지도에서 보기</Text></TouchableOpacity>
-                  <TouchableOpacity style={styles.bookmarkOutlineBtn}>
+                  <TouchableOpacity style={styles.bookmarkOutlineBtn} onPress={handleSaveCurrentCourse} disabled={isSubmitting}>
                     <Bookmark size={14} color="#5B44E8" />
                     <Text style={{ color: '#5B44E8', fontWeight: 'bold', fontSize: 13 }}>코스 저장하기</Text>
                   </TouchableOpacity>
@@ -1035,7 +1322,9 @@ export function MainApp({ onLogout }: { onLogout: () => void }) {
                 </ScrollView>
 
                 <View style={styles.footer}>
-                  <TouchableOpacity style={styles.purpleBtn} onPress={() => setFlow('feedbackReview')}><Text style={styles.purpleBtnText}>코스 확정하기</Text></TouchableOpacity>
+                  <TouchableOpacity style={styles.purpleBtn} onPress={handleConfirmTrip} disabled={isSubmitting}>
+                    {isSubmitting ? <ActivityIndicator color="#FFF" /> : <Text style={styles.purpleBtnText}>코스 확정하기</Text>}
+                  </TouchableOpacity>
                   <TouchableOpacity style={styles.changeStatusBtn} onPress={() => setIsChangeModalOpen(true)}>
                     <RotateCcw size={14} color="#5B44E8" />
                     <Text style={{ color: '#5B44E8', fontWeight: 'bold', fontSize: 13 }}>상황이 바뀌었어요</Text>
@@ -1101,7 +1390,9 @@ export function MainApp({ onLogout }: { onLogout: () => void }) {
                 </ScrollView>
 
                 <View style={styles.footer}>
-                  <TouchableOpacity style={styles.purpleBtn} onPress={() => setFlow('feedbackDone')}><Text style={styles.purpleBtnText}>피드백 제출하기</Text></TouchableOpacity>
+                  <TouchableOpacity style={styles.purpleBtn} onPress={handleSubmitFeedback} disabled={isSubmitting}>
+                    {isSubmitting ? <ActivityIndicator color="#FFF" /> : <Text style={styles.purpleBtnText}>피드백 제출하기</Text>}
+                  </TouchableOpacity>
                   <TouchableOpacity onPress={() => setFlow('home')} style={{ alignItems: 'center', marginTop: 10 }}>
                     <Text style={{ color: '#6B7280', fontSize: 13 }}>나중에 하기</Text>
                   </TouchableOpacity>
@@ -1242,21 +1533,25 @@ export function MainApp({ onLogout }: { onLogout: () => void }) {
               <View style={styles.savedBanner}>
                 <Text style={{ fontSize: 24 }}>🏆</Text>
                 <View>
-                  <Text style={{ fontSize: 16, fontWeight: '900', color: '#FFF' }}>총 6개의 코스 저장</Text>
-                  <Text style={{ fontSize: 12, color: '#E0E7FF', marginTop: 2 }}>지금까지 방문한 경기장: 4곳</Text>
+                  <Text style={{ fontSize: 16, fontWeight: '900', color: '#FFF' }}>총 {savedCourses.length}개의 코스 저장</Text>
+                  <Text style={{ fontSize: 12, color: '#E0E7FF', marginTop: 2 }}>저장한 코스를 다시 확인할 수 있어요.</Text>
                 </View>
               </View>
 
-              {SAVED_ITEMS.map((item, idx) => (
-                <View key={idx} style={styles.savedCardRow}>
-                  <View style={styles.savedIconCircle}><Text style={{ fontSize: 20 }}>{item.icon}</Text></View>
+              {savedCourses.length === 0 && <Text style={styles.emptyListText}>아직 저장한 코스가 없습니다.</Text>}
+              {savedCourses.map((item) => (
+                <View key={item.id} style={styles.savedCardRow}>
+                  <View style={styles.savedIconCircle}><Text style={{ fontSize: 20 }}>🏆</Text></View>
                   <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 15, fontWeight: 'bold' }}>{item.stadium}</Text>
-                    <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 2 }}>{item.type}</Text>
+                    <Text style={{ fontSize: 15, fontWeight: 'bold' }}>{item.stadium ?? '경기장'}</Text>
+                    <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 2 }}>{item.title}</Text>
                   </View>
                   <View style={{ alignItems: 'flex-end', gap: 4 }}>
-                    <Text style={{ fontSize: 11, color: '#9CA3AF' }}>{item.date}</Text>
-                    <Heart size={18} color="#EF4444" fill="#EF4444" />
+                    <Text style={{ fontSize: 11, color: '#9CA3AF' }}>{new Date(item.savedAt).toLocaleDateString()}</Text>
+                    <TouchableOpacity onPress={async () => {
+                      try { await deleteSavedCourse(item.id); setSavedCourses((previous) => previous.filter((course) => course.id !== item.id)); }
+                      catch (error) { Alert.alert('삭제 실패', error instanceof Error ? error.message : '코스를 삭제하지 못했습니다.'); }
+                    }}><Heart size={18} color="#EF4444" fill="#EF4444" /></TouchableOpacity>
                   </View>
                 </View>
               ))}
@@ -1285,7 +1580,7 @@ export function MainApp({ onLogout }: { onLogout: () => void }) {
                     <View style={[styles.mascotCircleLarge, { backgroundColor: selectedBgColor.hex }]}>
                       <Text style={{ fontSize: 44 }}>{selectedMascot.emoji}</Text>
                     </View>
-                    <Text style={{ fontSize: 18, fontWeight: '900', color: '#0F0E1A', marginTop: 12 }}>야구팬 김민준</Text>
+                    <Text style={{ fontSize: 18, fontWeight: '900', color: '#0F0E1A', marginTop: 12 }}>{profile.nickname}</Text>
                     <Text style={{ fontSize: 11, color: '#9CA3AF', marginTop: 2 }}>미리보기</Text>
                   </View>
 
@@ -1333,7 +1628,7 @@ export function MainApp({ onLogout }: { onLogout: () => void }) {
                 </ScrollView>
 
                 <View style={styles.footer}>
-                  <TouchableOpacity style={styles.purpleBtn} onPress={() => setFlow('home')}>
+                  <TouchableOpacity style={styles.purpleBtn} onPress={() => handleProfileSave({ mascot: selectedMascot.id, themeColor: selectedBgColor.hex })} disabled={isSubmitting}>
                     <Text style={styles.purpleBtnText}>설정하기</Text>
                   </TouchableOpacity>
                 </View>
@@ -1353,10 +1648,12 @@ export function MainApp({ onLogout }: { onLogout: () => void }) {
                     </TouchableOpacity>
                     <View>
                       <View style={styles.rowCenter}>
-                        <Text style={{ fontSize: 20, fontWeight: '900', color: '#FFF' }}>야구팬 김민준</Text>
+                        <TouchableOpacity onPress={() => { setNicknameDraft(profile.nickname); setIsNicknameModalOpen(true); }}>
+                          <Text style={{ fontSize: 20, fontWeight: '900', color: '#FFF' }}>{profile.nickname}</Text>
+                        </TouchableOpacity>
                         <Pencil size={14} color="#E0E7FF" />
                       </View>
-                      <Text style={{ fontSize: 12, color: '#E0E7FF', marginTop: 2 }}>⭐ MVP 멤버 · 가입 2024.03.15</Text>
+                      <Text style={{ fontSize: 12, color: '#E0E7FF', marginTop: 2 }}>{profile.email}</Text>
                       <TouchableOpacity style={styles.changeIconPill} onPress={() => setFlow('customizeMascot')}>
                         <Text style={{ fontSize: 10, color: '#FFF', fontWeight: 'bold' }}>🏆 아이콘으로 변경</Text>
                       </TouchableOpacity>
@@ -1364,33 +1661,34 @@ export function MainApp({ onLogout }: { onLogout: () => void }) {
                   </View>
 
                   <View style={{ flexDirection: 'row', gap: 8, marginTop: 20 }}>
-                    <View style={styles.myStatBox}><Text style={{ fontSize: 18, fontWeight: '900', color: '#FFF' }}>5</Text><Text style={{ fontSize: 10, color: '#E0E7FF' }}>방문 경기장</Text></View>
-                    <View style={styles.myStatBox}><Text style={{ fontSize: 18, fontWeight: '900', color: '#FFF' }}>6</Text><Text style={{ fontSize: 10, color: '#E0E7FF' }}>저장 코스</Text></View>
-                    <View style={styles.myStatBox}><Text style={{ fontSize: 18, fontWeight: '900', color: '#FFF' }}>5</Text><Text style={{ fontSize: 10, color: '#E0E7FF' }}>여행 횟수</Text></View>
+                    <View style={styles.myStatBox}><Text style={{ fontSize: 18, fontWeight: '900', color: '#FFF' }}>{new Set(tripList.map((trip) => trip.stadium)).size}</Text><Text style={{ fontSize: 10, color: '#E0E7FF' }}>방문 경기장</Text></View>
+                    <View style={styles.myStatBox}><Text style={{ fontSize: 18, fontWeight: '900', color: '#FFF' }}>{savedCourses.length}</Text><Text style={{ fontSize: 10, color: '#E0E7FF' }}>저장 코스</Text></View>
+                    <View style={styles.myStatBox}><Text style={{ fontSize: 18, fontWeight: '900', color: '#FFF' }}>{tripList.length}</Text><Text style={{ fontSize: 10, color: '#E0E7FF' }}>여행 횟수</Text></View>
                   </View>
                 </View>
 
                 <ScrollView style={styles.flex1} contentContainerStyle={{ padding: 20, gap: 12 }}>
                   <View style={styles.rowBetween}>
                     <Text style={styles.sectionTitle}>내 여행리스트</Text>
-                    <Text style={{ fontSize: 12, color: '#6B7280' }}>총 5건</Text>
+                    <Text style={{ fontSize: 12, color: '#6B7280' }}>총 {tripList.length}건</Text>
                   </View>
 
-                  {MY_TRIP_LIST.map((trip, idx) => (
-                    <View key={idx} style={styles.tripCardRow}>
-                      <View style={styles.tripIconCircle}><Text style={{ fontSize: 20 }}>{trip.icon}</Text></View>
+                  {tripList.length === 0 && <Text style={styles.emptyListText}>아직 확정한 여행이 없습니다.</Text>}
+                  {tripList.map((trip) => (
+                    <View key={trip.id} style={styles.tripCardRow}>
+                      <View style={styles.tripIconCircle}><Text style={{ fontSize: 20 }}>🏟️</Text></View>
                       <View style={{ flex: 1 }}>
                         <Text style={{ fontSize: 15, fontWeight: 'bold' }}>{trip.stadium}</Text>
-                        <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 2 }}>{trip.match}</Text>
+                        <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 2 }}>{trip.matchName ?? '경기 관람 여행'}</Text>
                         <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center', marginTop: 6 }}>
-                          <Text style={{ fontSize: 11, color: '#9CA3AF' }}>{trip.date}</Text>
-                          <View style={styles.tagBluePill}><Text style={{ fontSize: 10, color: '#5B44E8', fontWeight: 'bold' }}>{trip.tag}</Text></View>
+                          <Text style={{ fontSize: 11, color: '#9CA3AF' }}>{trip.tripDate ?? new Date(trip.createdAt).toLocaleDateString()}</Text>
+                          <View style={styles.tagBluePill}><Text style={{ fontSize: 10, color: '#5B44E8', fontWeight: 'bold' }}>{trip.courseTitle ?? '추천 코스'}</Text></View>
                         </View>
                       </View>
                       <View style={{ alignItems: 'flex-end', justifyContent: 'space-between' }}>
                         <View style={{ flexDirection: 'row' }}>
                           {Array.from({ length: 5 }).map((_, i) => (
-                            <Star key={i} size={12} color={i < trip.rating ? '#F59E0B' : '#E2E8F0'} fill={i < trip.rating ? '#F59E0B' : 'transparent'} />
+                            <Star key={i} size={12} color={i < (trip.rating ?? 0) ? '#F59E0B' : '#E2E8F0'} fill={i < (trip.rating ?? 0) ? '#F59E0B' : 'transparent'} />
                           ))}
                         </View>
                         <ChevronRight size={16} color="#9CA3AF" />
@@ -1402,10 +1700,10 @@ export function MainApp({ onLogout }: { onLogout: () => void }) {
                     <Text style={{ fontSize: 12, color: '#9CA3AF', marginBottom: 12 }}>계정 관리</Text>
                   </View>
 
-                  <TouchableOpacity style={styles.accountOutlineBtn}>
+                  <TouchableOpacity style={styles.accountOutlineBtn} onPress={() => setIsPasswordModalOpen(true)}>
                     <Text style={{ fontSize: 15, fontWeight: 'bold', color: '#5B44E8' }}>비밀번호 변경</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity style={styles.accountRedOutlineBtn}>
+                  <TouchableOpacity style={styles.accountRedOutlineBtn} onPress={handleDeleteAccount}>
                     <Text style={{ fontSize: 15, fontWeight: 'bold', color: '#EF4444' }}>회원탈퇴 및 데이터 삭제</Text>
                   </TouchableOpacity>
                 </ScrollView>
@@ -1414,6 +1712,33 @@ export function MainApp({ onLogout }: { onLogout: () => void }) {
           </>
         )}
       </View>
+
+      <Modal visible={isNicknameModalOpen} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <Text style={{ fontSize: 18, fontWeight: '900' }}>닉네임 변경</Text>
+            <TextInput value={nicknameDraft} onChangeText={setNicknameDraft} maxLength={50} placeholder="새 닉네임" style={styles.modalInput} />
+            <TouchableOpacity style={styles.purpleBtn} onPress={() => handleProfileSave({ nickname: nicknameDraft })} disabled={isSubmitting}>
+              {isSubmitting ? <ActivityIndicator color="#FFF" /> : <Text style={styles.purpleBtnText}>저장</Text>}
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setIsNicknameModalOpen(false)} style={{ alignItems: 'center', marginTop: 12 }}><Text style={{ color: '#6B7280' }}>취소</Text></TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={isPasswordModalOpen} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <Text style={{ fontSize: 18, fontWeight: '900' }}>비밀번호 변경</Text>
+            <TextInput value={currentPasswordDraft} onChangeText={setCurrentPasswordDraft} secureTextEntry placeholder="현재 비밀번호" style={styles.modalInput} />
+            <TextInput value={newPasswordDraft} onChangeText={setNewPasswordDraft} secureTextEntry placeholder="새 비밀번호 (8자 이상)" style={styles.modalInput} />
+            <TouchableOpacity style={styles.purpleBtn} onPress={handlePasswordSave} disabled={isSubmitting}>
+              {isSubmitting ? <ActivityIndicator color="#FFF" /> : <Text style={styles.purpleBtnText}>변경하기</Text>}
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setIsPasswordModalOpen(false)} style={{ alignItems: 'center', marginTop: 12 }}><Text style={{ color: '#6B7280' }}>취소</Text></TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {/* "상황이 바뀌었나요?" 하단 팝업 모달 */}
       <Modal visible={isChangeModalOpen} transparent animationType="slide">
@@ -1495,38 +1820,27 @@ export function MainApp({ onLogout }: { onLogout: () => void }) {
 // ─────────────────────────────────────────────────────────
 
 export default function App() {
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [loginScreen, setLoginScreen] = useState<LoginScreenType>('splash');
+  const [user, setUser] = useState<UserProfile | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const handleLoginSuccess = () => {
-    setIsLoggedIn(true);
-  };
+  useEffect(() => {
+    loadAuthSession().then(async (session) => {
+      if (!session) { router.replace('/auth'); return; }
+      try {
+        const profile = await getMyProfile();
+        setUser({ ...session, ...profile, accessToken: session.accessToken });
+      } catch {
+        await clearAuthSession();
+        router.replace('/auth');
+      } finally { setIsLoading(false); }
+    }).catch(() => { setIsLoading(false); router.replace('/auth'); });
+  }, []);
 
-  const handleLogout = () => {
-    setIsLoggedIn(false);
-    setLoginScreen('splash');
-  };
+  if (isLoading) return <View style={[styles.flex1, { alignItems: 'center', justifyContent: 'center' }]}><ActivityIndicator color="#5B44E8" /></View>;
+  if (!user) return null;
 
-  if (isLoggedIn) {
-    return <MainApp onLogout={handleLogout} />;
-  }
-
-  return (
-    <SafeAreaView style={styles.flex1}>
-      {loginScreen === 'splash' && (
-        <SplashScreen 
-          onLoginNavigate={() => setLoginScreen('idLogin')} 
-          onSkip={handleLoginSuccess} 
-        />
-      )}
-      {loginScreen === 'idLogin' && (
-        <IDLoginScreen 
-          onBack={() => setLoginScreen('splash')} 
-          onLoginSuccess={handleLoginSuccess} 
-        />
-      )}
-    </SafeAreaView>
-  );
+  const handleLogout = async () => { await clearAuthSession(); router.replace('/auth'); };
+  return <MainApp initialUser={user} onLogout={handleLogout} />;
 }
 
 // ─────────────────────────────────────────────────────────
@@ -1588,6 +1902,10 @@ const styles = StyleSheet.create({
   chipActiveText: { color: '#FFFFFF', fontWeight: 'bold' },
 
   locationChip: { backgroundColor: '#FFF', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, borderWidth: 1, borderColor: '#E2E8F0' },
+  locationActionBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 9, borderRadius: 20, backgroundColor: '#EEF2FF', borderWidth: 1, borderColor: '#C7D2FE' },
+  locationActionText: { fontSize: 12, color: '#5B44E8', fontWeight: '800' },
+  locationVerified: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 9, borderRadius: 20, backgroundColor: '#ECFDF5' },
+  locationVerifiedText: { fontSize: 11, color: '#059669', fontWeight: '700' },
 
   outlineBtn: { flex: 1, height: 48, borderRadius: 12, borderWidth: 1.5, borderColor: '#E2E8F0', justifyContent: 'center', alignItems: 'center', backgroundColor: '#FFF' },
   outlineBtnActive: { borderColor: '#5B44E8', backgroundColor: '#EEF2FF' },
@@ -1624,6 +1942,12 @@ const styles = StyleSheet.create({
   addBtn: { backgroundColor: '#5B44E8', paddingHorizontal: 16, borderRadius: 8, justifyContent: 'center' },
   addBtnText: { color: '#FFF', fontWeight: 'bold', fontSize: 12 },
   placeItemCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#F1F5F9', gap: 10 },
+  placeResultsBox: { backgroundColor: '#FFF', borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', overflow: 'hidden' },
+  placeResultRow: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' },
+  placeResultIcon: { width: 28, height: 28, borderRadius: 14, backgroundColor: '#EEF2FF', alignItems: 'center', justifyContent: 'center' },
+  placeResultMeta: { color: '#6B7280', fontSize: 11, marginTop: 3 },
+  placeSelectText: { color: '#5B44E8', fontSize: 11, fontWeight: '800' },
+  placeHint: { color: '#9CA3AF', fontSize: 11, textAlign: 'center', paddingVertical: 4 },
   numBadge: { width: 24, height: 24, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
   numBadgeText: { color: '#FFF', fontWeight: 'bold', fontSize: 11 },
   closeCircle: { width: 24, height: 24, borderRadius: 12, backgroundColor: '#F1F5F9', justifyContent: 'center', alignItems: 'center' },
@@ -1700,6 +2024,9 @@ const styles = StyleSheet.create({
   savedBanner: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#5B44E8', padding: 16, borderRadius: 16, marginBottom: 8 },
   savedCardRow: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#FFF', padding: 16, borderRadius: 16, borderWidth: 1, borderColor: '#F1F5F9' },
   savedIconCircle: { width: 40, height: 40, borderRadius: 12, backgroundColor: '#F8FAFC', justifyContent: 'center', alignItems: 'center' },
+  emptyListText: { padding: 28, textAlign: 'center', color: '#9CA3AF', fontSize: 13 },
+  aiEmptyCard: { alignItems: 'center', backgroundColor: '#EEF2FF', borderRadius: 20, padding: 24, marginTop: 24 },
+  modalInput: { height: 48, borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 12, paddingHorizontal: 14, marginTop: 14, color: '#111827', backgroundColor: '#FFF' },
 
   myHeaderPurple: { backgroundColor: '#2E2A72', paddingHorizontal: 20, paddingTop: 16, paddingBottom: 24 },
   avatarPurpleCircle: { width: 64, height: 64, borderRadius: 32, justifyContent: 'center', alignItems: 'center', position: 'relative' },

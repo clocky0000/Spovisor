@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { login, signup } from '../lib/api';
+import { login, saveAuthSession, signup } from '../lib/api';
 
 type AuthMode = 'login' | 'signup';
 
@@ -48,9 +48,11 @@ export default function AuthScreen() {
     setIsSubmitting(true);
     try {
       if (isSignup) {
-        await signup(normalizedEmail, password, nickname.trim());
+        const auth = await signup(normalizedEmail, password, nickname.trim());
+        await saveAuthSession(auth);
       } else {
-        await login(normalizedEmail, password);
+        const auth = await login(normalizedEmail, password);
+        await saveAuthSession(auth);
       }
       router.replace('/');
     } catch (error) {
