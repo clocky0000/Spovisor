@@ -48,7 +48,14 @@ public class AuthService {
     }
 
     private AuthResponse toResponse(User user) {
-        return new AuthResponse(jwtService.issue(user), user.getId(), user.getEmail(), user.getNickname());
+        return new AuthResponse(
+                jwtService.issue(user),
+                user.getId(),
+                user.getEmail(),
+                user.getNickname(),
+                user.getMascot(),
+                user.getThemeColor()
+        );
     }
 
     private String normalizeEmail(String email) {

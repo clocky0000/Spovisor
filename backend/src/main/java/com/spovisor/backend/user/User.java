@@ -26,6 +26,12 @@ public class User {
     @Column(nullable = false, length = 50)
     private String nickname;
 
+    @Column(nullable = false, length = 50)
+    private String mascot;
+
+    @Column(name = "theme_color", nullable = false, length = 7)
+    private String themeColor;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
@@ -36,6 +42,8 @@ public class User {
         this.email = email;
         this.passwordHash = passwordHash;
         this.nickname = nickname;
+        this.mascot = "trophy";
+        this.themeColor = "#5B44E8";
         this.createdAt = LocalDateTime.now();
     }
 
@@ -53,5 +61,33 @@ public class User {
 
     public String getNickname() {
         return nickname;
+    }
+
+    public String getMascot() {
+        return mascot;
+    }
+
+    public String getThemeColor() {
+        return themeColor;
+    }
+
+    public LocalDateTime getCreatedAt() {
+        return createdAt;
+    }
+
+    public void updateProfile(String nickname, String mascot, String themeColor) {
+        if (nickname != null && !nickname.isBlank()) {
+            this.nickname = nickname.trim();
+        }
+        if (mascot != null && !mascot.isBlank()) {
+            this.mascot = mascot.trim();
+        }
+        if (themeColor != null && !themeColor.isBlank()) {
+            this.themeColor = themeColor.trim();
+        }
+    }
+
+    public void changePassword(String passwordHash) {
+        this.passwordHash = passwordHash;
     }
 }

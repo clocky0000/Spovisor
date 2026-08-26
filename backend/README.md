@@ -46,6 +46,20 @@ PostgreSQL 볼륨은 `spovisor-postgres-data`에 저장되므로 컨테이너를
 
 두 API 모두 `accessToken`, `userId`, `email`, `nickname`을 반환합니다.
 
+## 앱 기능 API
+
+모든 아래 API는 로그인 후 `Authorization: Bearer <accessToken>` 헤더가 필요합니다.
+
+- `GET/PATCH/DELETE /api/users/me`: 프로필 조회·수정·회원탈퇴
+- `PATCH /api/users/me/password`: 비밀번호 변경
+- `GET/POST/PUT /api/user/survey`: 마지막 설문 조회·저장
+- `GET/POST/DELETE /api/courses/saved`: 저장 코스 조회·저장·삭제
+- `GET/POST /api/trips`: 여행 기록 조회·생성
+- `PATCH /api/trips/{tripId}/feedback`: 여행 평점·방문 장소 저장
+- `POST/GET /api/recommendations/requests`: AI 연동 전 추천 요청 원본 저장·조회
+
+AI 서버가 완성되면 추천 요청 API의 `PENDING` 요청을 기준으로 AI 결과를 연결하면 됩니다. 현재 백엔드는 AI 추천 계산이나 관광 API 호출을 수행하지 않습니다.
+
 ## Flyway
 
 - `V1__create_ai_tables.sql`: 캡처 기준 4개 테이블 생성
