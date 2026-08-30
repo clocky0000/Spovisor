@@ -10,7 +10,6 @@
 📁 spovisor-model
 ├── 📄 constants.py       벡터 상수 및 설정값 정의
 ├── 📄 model.py           추천 로직 핵심 함수
-├── 📄 batch.py           배치 스크립트 (장소 데이터 수집)
 ├── 📄 recommend.py       Flask API 서버
 ├── 📄 requirements.txt   필요 라이브러리
 └── 📄 .gitignore
@@ -31,14 +30,7 @@ cp .env.example .env
 pip install -r requirements.txt
 ```
 
-### 3. 배치 실행 (장소 데이터 수집)
-```bash
-python batch.py
-# → spots.json, relations.json 생성
-# → 백엔드 연동 후: save_to_db=True 로 변경
-```
-
-### 4. 추천 서버 실행
+### 3. 추천 서버 실행
 ```bash
 python recommend.py
 # → http://localhost:5000 에서 실행
@@ -123,8 +115,6 @@ python recommend.py
 
 ## 백엔드 연동 체크리스트
 
-- [ ] `spots.json` → `spot_cache` 테이블 적재
-- [ ] `relations.json` → `spot_relation` 테이블 적재
 - [ ] `GET /spots/cache` API 오픈
 - [ ] `GET /spots/relations` API 오픈
 - [ ] `GET·POST /user/survey` API 오픈
@@ -132,10 +122,3 @@ python recommend.py
 - [ ] `recommend.py` → DB 조회 함수로 교체
 
 ---
-
-## 배치 실행 주기
-
-| 주기 | 스크립트 | 내용 |
-|---|---|---|
-| 월 1회 | `python batch.py` | 전체 장소 데이터 갱신 |
-| 매일 | 혼잡도 별도 배치 | 향후 30일 혼잡도 갱신 |
