@@ -1,12 +1,13 @@
 # model.py
-# 추천 모델 핵심 로직 (벡터 생성, 필터링, 코스 구성, MMR, 요약, 피드백)
+# 추천 모델 핵심 로직
 
 import numpy as np
 import random
 from constants import (
     DIMS, CATEGORY_VEC, SCORE_DIM_MAP,
     CONCEPT_VEC, COMPANION_ADJUST, EXTRA_ADJUST,
-    RATIO_MAP, TRANSPORT_RADIUS, MAX_SPOT_COUNT,
+    RATIO_MAP, RATIO_CATEGORY_MAP,
+    TRANSPORT_RADIUS, MAX_SPOT_COUNT, MAX_WALK_MINUTES,
     ACCESSIBILITY_FILTER, EXCLUDE_CATEGORY_MAP,
     CONCEPT_CATEGORY_MAP, SUMMARY_TEMPLATES, CAT_LABEL,
 )
@@ -51,6 +52,25 @@ def build_region_vec(scores):
     return vec
 
 
+# ── 비율 처리 ──────────────────────────────────
+
+def resolve_ratio(survey, concept):
+    """
+    커스텀 비율이 있으면 그걸 쓰고, 없으면 컨셉 기본값 사용
+    커스텀 비율 형식: {"맛집": 30, "관광지": 40, "자연": 0, "쇼핑": 30}
+    합산이 100이 아니어도 자동 정규화
+    """
+    custom = survey.get("커스텀비율")
+
+    if custom:
+        total = sum(custom.values())
+        if total == 0:
+            return RATIO_MAP.get(concept, {"맛집": 25, "관광지": 25, "자연": 25, "쇼핑": 25})
+        return {k: round(v / total * 100) for k, v in custom.items()}
+
+    return RATIO_MAP.get(concept, {"맛집": 25, "관광지": 25, "자연": 25, "쇼핑": 25})
+
+
 # ── 사용자 벡터 생성 ───────────────────────────
 
 def build_user_vec(survey: dict) -> dict:
@@ -61,54 +81,59 @@ def build_user_vec(survey: dict) -> dict:
     ----------
     survey : dict
         {
-            "경기장":       "수원 KT위즈파크",
+            "경기장":       "수원KT위즈파크",
             "여행_방식":    "경기 전",
-            "이동수단":     "대중교통",
+            "이동방식":     "대중교통+도보",  # "자차+도보" / "도보 단독"
             "최대이동시간": "1시간",
             "동행":         "친구와 여행",
             "추가동행":     [],
             "컨셉":         "미식 탐방형",
             "추가조건":     ["혼잡 피하기"],
-            "고정핀":       [],
+            "최대이동시간": "1시간",           # "30분"/"1시간"/"1시간 30분"/"2시간"/"3시간"
+            "걷는거리":     "20분 이내",       # "10분 이내"/"20분 이내"/"30분 이내"/"상관없음"
+            "고정핀":       ["경복궁"],        # 꼭 넣고 싶은 장소
+            "제외장소":     ["롯데월드몰"],     # 피하고 싶은 장소
             "제외조건":     [],
-        }
-
-    Returns
-    -------
-    dict
-        {
-            "vector": [float, ...],  # 8차원 벡터
-            "meta":   {...}          # 필터링/코스 구성 메타 정보
+            "커스텀비율":   {"맛집": 30, "관광지": 40, "자연": 0, "쇼핑": 30}  # 선택사항
         }
     """
     concept = survey.get("컨셉", "관광지 중심형")
     base    = CONCEPT_VEC.get(concept, CONCEPT_VEC["관광지 중심형"]).copy()
     vec     = {dim: base[i] for i, dim in enumerate(DIMS)}
 
+    # 동행 보정
     companion = survey.get("동행", "")
     if companion in COMPANION_ADJUST:
         for dim, delta in COMPANION_ADJUST[companion].items():
             vec[dim] = vec.get(dim, 0) + delta
 
+    # 추가 조건 보정
     for extra in survey.get("추가조건", []):
         if extra in EXTRA_ADJUST:
             for dim, delta in EXTRA_ADJUST[extra].items():
                 vec[dim] = vec.get(dim, 0) + delta
 
+    # 혼잡선호 클램핑
     vec["혼잡선호"] = max(-1.0, min(1.0, vec["혼잡선호"]))
 
+    # 정규화 (혼잡선호 제외)
     main_dims = [d for d in DIMS if d != "혼잡선호"]
     total     = sum(abs(vec[d]) for d in main_dims)
     if total > 0:
         for dim in main_dims:
             vec[dim] /= total
 
+    # 비율 결정 (커스텀 or 컨셉 기본값)
+    ratio = resolve_ratio(survey, concept)
+
     meta = {
-        "ratio":             RATIO_MAP.get(concept, {"음식": 33, "관광": 34, "카페": 33}),
-        "radius_km":         TRANSPORT_RADIUS.get(survey.get("이동수단", "대중교통"), 5),
-        "max_spots":         MAX_SPOT_COUNT.get(survey.get("최대이동시간", "1시간"), 5),
+        "ratio":             ratio,
+        "radius_km":         TRANSPORT_RADIUS.get(survey.get("이동방식", "대중교통+도보"), 5),
+        "max_spots":         MAX_SPOT_COUNT.get(survey.get("최대이동시간", "1시간"), 3),
+        "max_walk_minutes":  MAX_WALK_MINUTES.get(survey.get("걷는거리", "상관없음"), 999),
         "trip_timing":       survey.get("여행_방식", "경기 전"),
-        "fixed_pins":        survey.get("고정핀", []),
+        "fixed_pins":        survey.get("고정핀", []),       # 꼭 넣고 싶은 장소
+        "exclude_spots":     survey.get("제외장소", []),     # 피하고 싶은 장소
         "accessibility":     [
             ACCESSIBILITY_FILTER[a]
             for a in survey.get("추가동행", [])
@@ -119,7 +144,9 @@ def build_user_vec(survey: dict) -> dict:
             for ex in survey.get("제외조건", [])
             for cat in EXCLUDE_CATEGORY_MAP.get(ex, [])
         ],
-        "concept": concept,
+        "concept":      concept,
+        "stadium_lat":  survey.get("stadium_lat"),   # 경기장 위도 (recommend.py에서 주입)
+        "stadium_lng":  survey.get("stadium_lng"),   # 경기장 경도 (recommend.py에서 주입)
     }
 
     return {
@@ -133,14 +160,19 @@ def build_user_vec(survey: dict) -> dict:
 def filter_candidates(user_result, spots, relations):
     """
     장소 후보를 점수 순으로 정렬해 반환
-
     점수 = 코사인유사도 + 우선카테고리보너스(0.15) + 순위보너스(최대0.05) - 혼잡도패널티
+
+    제외 처리:
+    - exclude_categories: 카테고리 단위 제외
+    - exclude_spots:      장소명 단위 제외 (피하고 싶은 장소)
     """
-    user_vec     = user_result["vector"]
-    meta         = user_result["meta"]
-    concept      = meta.get("concept", "관광지 중심형")
-    exclude_cats = meta["exclude_categories"]
-    signgu_cd    = spots[0]["signgu_cd"] if spots else None
+    user_vec      = user_result["vector"]
+    meta          = user_result["meta"]
+    concept       = meta.get("concept", "관광지 중심형")
+    exclude_cats      = meta["exclude_categories"]
+    exclude_spots     = meta.get("exclude_spots", [])      # 피하고 싶은 장소
+    max_walk_minutes  = meta.get("max_walk_minutes", 999)  # 걷는 거리 제한
+    signgu_cd         = spots[0]["signgu_cd"] if spots else None
 
     # 연관 관광지에서 음식 장소 추가
     extra_spots = []
@@ -166,8 +198,48 @@ def filter_candidates(user_result, spots, relations):
                 })
 
     all_pool = spots + extra_spots
-    all_pool = [s for s in all_pool if s["mcls_nm"] not in exclude_cats]
 
+    # 카테고리 제외 + 장소명 제외 동시 처리
+    all_pool = [
+        s for s in all_pool
+        if s["mcls_nm"] not in exclude_cats
+        and s["spot_name"] not in exclude_spots
+    ]
+
+    # 걷는 거리 필터 (경기장 좌표 기준 haversine 거리 계산)
+    # 도보 평균 속도 4km/h 기준
+    stadium_lat = meta.get("stadium_lat")
+    stadium_lng = meta.get("stadium_lng")
+
+    if max_walk_minutes < 999 and stadium_lat and stadium_lng:
+        import math
+        max_dist_km = (max_walk_minutes / 60) * 4
+
+        def haversine(lat1, lng1, lat2, lng2):
+            R = 6371
+            dlat = math.radians(lat2 - lat1)
+            dlng = math.radians(lng2 - lng1)
+            a = (math.sin(dlat/2)**2
+                 + math.cos(math.radians(lat1))
+                 * math.cos(math.radians(lat2))
+                 * math.sin(dlng/2)**2)
+            return R * 2 * math.asin(math.sqrt(a))
+
+        def is_within_walk(spot):
+            if not spot.get("map_x") or not spot.get("map_y"):
+                return True  # 좌표 없으면 통과
+            try:
+                dist = haversine(
+                    stadium_lat, stadium_lng,
+                    float(spot["map_y"]), float(spot["map_x"])
+                )
+                return dist <= max_dist_km
+            except Exception:
+                return True
+
+        all_pool = [s for s in all_pool if is_within_walk(s)]
+
+    # 미식 탐방형이면 기타관광 제외
     if concept == "미식 탐방형":
         all_pool = [s for s in all_pool if s["mcls_nm"] != "기타관광"]
 
@@ -191,8 +263,8 @@ def filter_candidates(user_result, spots, relations):
 
 def build_course(user_result, candidates, n=5):
     """
-    컨셉 비율(음식/관광/카페)에 맞게 코스 구성
-    고정 핀이 있으면 해당 장소를 먼저 포함
+    맛집/관광지/자연/쇼핑 비율에 맞게 코스 구성
+    고정핀(꼭 넣고 싶은 장소)은 반드시 포함
     """
     user_vec   = user_result["vector"]
     meta       = user_result["meta"]
@@ -201,19 +273,22 @@ def build_course(user_result, candidates, n=5):
     max_spots  = meta["max_spots"]
     n          = min(n, max_spots)
 
-    food_n = round(n * ratio["음식"]  / 100)
-    tour_n = round(n * ratio["관광"]  / 100)
-    cafe_n = n - food_n - tour_n
+    # 비율 → 장소 수 계산
+    total    = sum(ratio.values())
+    food_n   = round(n * ratio.get("맛집",   0) / total)
+    tour_n   = round(n * ratio.get("관광지", 0) / total)
+    nature_n = round(n * ratio.get("자연",   0) / total)
+    shop_n   = n - food_n - tour_n - nature_n
 
-    food_cats = ["음식", "기타관광"]
-    tour_cats = ["역사관광", "문화관광", "자연관광", "체험관광", "레저스포츠"]
-    cafe_cats = ["쇼핑"]
-
-    food_pool = [s for s in candidates if s["mcls_nm"] in food_cats]
-    tour_pool = [s for s in candidates if s["mcls_nm"] in tour_cats]
-    cafe_pool = [s for s in candidates if s["mcls_nm"] in cafe_cats]
+    # 카테고리별 후보 분리
+    food_pool   = [s for s in candidates if s["mcls_nm"] in RATIO_CATEGORY_MAP["맛집"]]
+    tour_pool   = [s for s in candidates if s["mcls_nm"] in RATIO_CATEGORY_MAP["관광지"]]
+    nature_pool = [s for s in candidates if s["mcls_nm"] in RATIO_CATEGORY_MAP["자연"]]
+    shop_pool   = [s for s in candidates if s["mcls_nm"] in RATIO_CATEGORY_MAP["쇼핑"]]
 
     def pick_best(pool, course, k, exclude=set()):
+        if k <= 0:
+            return []
         scored = []
         for spot in pool:
             if spot["spot_name"] in exclude:
@@ -228,27 +303,32 @@ def build_course(user_result, candidates, n=5):
 
     course = []
 
-    # 고정 핀 먼저
+    # 고정핀 먼저 (꼭 넣고 싶은 장소)
     for pin_name in fixed_pins:
-        for pool in [food_pool, tour_pool, cafe_pool, candidates]:
+        for pool in [food_pool, tour_pool, nature_pool, shop_pool, candidates]:
             pin = next((s for s in pool if pin_name in s["spot_name"]), None)
             if pin:
                 course.append(pin)
-                for p in [food_pool, tour_pool, cafe_pool]:
+                for p in [food_pool, tour_pool, nature_pool, shop_pool]:
                     if pin in p:
                         p.remove(pin)
                 break
 
+    # 카테고리별 강제 배분
     food_picked = pick_best(food_pool, course, food_n)
     course.extend(food_picked)
-    used = set(s["spot_name"] for s in food_picked)
+    used = set(s["spot_name"] for s in course)
 
     tour_picked = pick_best([s for s in tour_pool if s["spot_name"] not in used], course, tour_n)
     course.extend(tour_picked)
     used.update(s["spot_name"] for s in tour_picked)
 
-    cafe_picked = pick_best([s for s in cafe_pool if s["spot_name"] not in used], course, cafe_n)
-    course.extend(cafe_picked)
+    nature_picked = pick_best([s for s in nature_pool if s["spot_name"] not in used], course, nature_n)
+    course.extend(nature_picked)
+    used.update(s["spot_name"] for s in nature_picked)
+
+    shop_picked = pick_best([s for s in shop_pool if s["spot_name"] not in used], course, shop_n)
+    course.extend(shop_picked)
 
     return course[:n]
 
@@ -264,27 +344,25 @@ def spot_overlap(course1, course2):
 
 
 def mmr_courses(user_result, candidates, k=3, n=5):
-    """
-    서로 다른 대안 코스 k개 생성
-    코스마다 다른 음식점/관광지를 사용해 다양성 확보
-    """
+    """서로 다른 대안 코스 k개 생성"""
     user_vec = user_result["vector"]
     meta     = user_result["meta"]
     ratio    = meta["ratio"]
 
-    food_n = round(n * ratio["음식"]  / 100)
-    tour_n = round(n * ratio["관광"]  / 100)
-    cafe_n = n - food_n - tour_n
+    total    = sum(ratio.values())
+    food_n   = round(n * ratio.get("맛집",   0) / total)
+    tour_n   = round(n * ratio.get("관광지", 0) / total)
+    nature_n = round(n * ratio.get("자연",   0) / total)
+    shop_n   = n - food_n - tour_n - nature_n
 
-    food_cats = ["음식", "기타관광"]
-    tour_cats = ["역사관광", "문화관광", "자연관광", "체험관광", "레저스포츠"]
-    cafe_cats = ["쇼핑"]
-
-    food_pool = [s for s in candidates if s["mcls_nm"] in food_cats]
-    tour_pool = [s for s in candidates if s["mcls_nm"] in tour_cats]
-    cafe_pool = [s for s in candidates if s["mcls_nm"] in cafe_cats]
+    food_pool   = [s for s in candidates if s["mcls_nm"] in RATIO_CATEGORY_MAP["맛집"]]
+    tour_pool   = [s for s in candidates if s["mcls_nm"] in RATIO_CATEGORY_MAP["관광지"]]
+    nature_pool = [s for s in candidates if s["mcls_nm"] in RATIO_CATEGORY_MAP["자연"]]
+    shop_pool   = [s for s in candidates if s["mcls_nm"] in RATIO_CATEGORY_MAP["쇼핑"]]
 
     def pick_best(pool, course, k, exclude=set()):
+        if k <= 0:
+            return []
         scored = []
         for spot in pool:
             if spot["spot_name"] in exclude:
@@ -298,8 +376,9 @@ def mmr_courses(user_result, candidates, k=3, n=5):
         return [s for _, s in scored[:k]]
 
     courses         = []
-    used_tour_names = set()
     used_food_names = set()
+    used_tour_names = set()
+    used_nat_names  = set()
 
     for c_idx in range(k):
         course = []
@@ -322,11 +401,20 @@ def mmr_courses(user_result, candidates, k=3, n=5):
         course.extend(tour_picked)
         used_tour_names.update(s["spot_name"] for s in tour_picked)
 
+        nat_picked = pick_best(nature_pool, course, nature_n, exclude=used_nat_names)
+        if len(nat_picked) < nature_n:
+            nat_picked = pick_best(
+                nature_pool, course, nature_n,
+                exclude=set(s["spot_name"] for s in course)
+            )
+        course.extend(nat_picked)
+        used_nat_names.update(s["spot_name"] for s in nat_picked)
+
         used_now    = set(s["spot_name"] for s in course)
-        cafe_picked = pick_best(cafe_pool, course, cafe_n, exclude=used_now)
-        if len(cafe_picked) < cafe_n:
-            cafe_picked = pick_best(cafe_pool, course, cafe_n)
-        course.extend(cafe_picked)
+        shop_picked = pick_best(shop_pool, course, shop_n, exclude=used_now)
+        if len(shop_picked) < shop_n:
+            shop_picked = pick_best(shop_pool, course, shop_n)
+        course.extend(shop_picked)
 
         courses.append(course[:n])
 
@@ -336,11 +424,9 @@ def mmr_courses(user_result, candidates, k=3, n=5):
 # ── 코스 요약 텍스트 생성 ──────────────────────
 
 def generate_summary(course, city, concept):
-    """
-    슬롯 템플릿 방식으로 코스 요약 텍스트 자동 생성 (LLM 미사용)
-    """
-    food_cats = ["음식", "기타관광"]
-    tour_cats = ["역사관광", "문화관광", "자연관광", "체험관광", "레저스포츠"]
+    """슬롯 템플릿 방식으로 코스 요약 텍스트 자동 생성 (LLM 미사용)"""
+    food_cats = RATIO_CATEGORY_MAP["맛집"]
+    tour_cats = RATIO_CATEGORY_MAP["관광지"]
 
     food_n   = sum(1 for s in course if s["mcls_nm"] in food_cats)
     tour_n   = sum(1 for s in course if s["mcls_nm"] in tour_cats)
@@ -369,7 +455,7 @@ def generate_summary(course, city, concept):
         "tags":    tags,
         "stats": {
             "총 장소":   len(course),
-            "음식":     food_n,
+            "맛집":     food_n,
             "관광":     tour_n,
             "거리(km)": distance,
         }
