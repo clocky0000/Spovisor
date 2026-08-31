@@ -7,6 +7,9 @@ public record SpotSearchResponse(
         String areaCode,
         String sigunguCode,
         Double longitude,
-        Double latitude
+        Double latitude,
+        String address,
+        String roadAddress,
+        String providerId
 ) {
 }

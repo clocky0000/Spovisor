@@ -24,7 +24,7 @@ public class UserService {
     @Transactional
     public UserProfileResponse updateProfile(User user, UpdateProfileRequest request) {
         user.updateProfile(request.nickname(), request.mascot(), request.themeColor());
-        return UserProfileResponse.from(user);
+        return UserProfileResponse.from(userRepository.saveAndFlush(user));
     }
 
     @Transactional
@@ -33,6 +33,7 @@ public class UserService {
             throw new BadCredentialsException("현재 비밀번호가 올바르지 않습니다.");
         }
         user.changePassword(passwordEncoder.encode(request.newPassword()));
+        userRepository.saveAndFlush(user);
     }
 
     @Transactional

@@ -26,7 +26,9 @@ public class SurveyService {
 
     @Transactional
     public SurveyResponse save(User user, JsonNode survey) {
-        String json = write(survey);
+        JsonNode normalizedSurvey = SurveyNormalizer.normalize(survey);
+        SurveyRules.validate(normalizedSurvey);
+        String json = write(normalizedSurvey);
         UserSurvey item = repository.findById(user.getId())
                 .map(existing -> {
                     existing.update(json);

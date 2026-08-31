@@ -19,9 +19,11 @@ public class RecommendationRequestService {
 
     @Transactional
     public RecommendationRequestResponse create(User user, JsonNode survey) {
+        JsonNode normalizedSurvey = SurveyNormalizer.normalize(survey);
+        SurveyRules.validate(normalizedSurvey);
         try {
             return RecommendationRequestResponse.from(repository.save(
-                    new RecommendationRequestEntity(user.getId(), objectMapper.writeValueAsString(survey))
+                    new RecommendationRequestEntity(user.getId(), objectMapper.writeValueAsString(normalizedSurvey))
             ));
         } catch (JsonProcessingException exception) {
             throw new IllegalArgumentException("추천 요청을 저장할 수 없습니다.", exception);

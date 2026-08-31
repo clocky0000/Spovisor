@@ -24,6 +24,10 @@ app:
   jwt:
     secret: ${JWT_SECRET:change-this-local-secret-to-a-long-random-value-123456789}
     expiration-ms: ${JWT_EXPIRATION_MS:86400000}
+  naver:
+    local:
+      client-id: ${NAVER_CLIENT_ID:}
+      client-secret: ${NAVER_CLIENT_SECRET:}
 
 logging:
   level:

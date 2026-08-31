@@ -46,6 +46,17 @@ PostgreSQL 볼륨은 `spovisor-postgres-data`에 저장되므로 컨테이너를
 
 두 API 모두 `accessToken`, `userId`, `email`, `nickname`을 반환합니다.
 
+## 네이버 검색 API 설정
+
+장소·출발지 검색은 네이버 지역 검색 API를 백엔드에서 호출합니다. 네이버 개발자 센터에서 검색 API 사용 권한을 활성화한 뒤 다음 환경변수를 설정하세요.
+
+```powershell
+$env:NAVER_CLIENT_ID = "발급받은 Client ID"
+$env:NAVER_CLIENT_SECRET = "발급받은 Client Secret"
+```
+
+클라이언트 시크릿은 앱(Expo)에 넣지 않고 백엔드에만 둡니다.
+
 ## 앱 기능 API
 
 모든 아래 API는 로그인 후 `Authorization: Bearer <accessToken>` 헤더가 필요합니다.
