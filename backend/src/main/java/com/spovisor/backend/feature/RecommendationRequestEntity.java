@@ -36,4 +36,18 @@ public class RecommendationRequestEntity {
     public Long getId() { return id; }
     public String getStatus() { return status; }
     public LocalDateTime getCreatedAt() { return createdAt; }
+
+    public String getSurveyJson() { return surveyJson; }
+    public String getResultJson() { return resultJson; }
+
+    public void complete(String resultJson) {
+        this.resultJson = resultJson;
+        this.status = "COMPLETED";
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    public void fail() {
+        this.status = "FAILED";
+        this.updatedAt = LocalDateTime.now();
+    }
 }

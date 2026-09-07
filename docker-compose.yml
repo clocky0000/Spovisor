@@ -15,6 +15,15 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+  
+  ai:
+    build:
+      context: ./spo_ai
+    container_name: spovisor-ai
+    env_file:
+      - ./spo_ai/.env
+    ports:
+      - "5000:5000"
 
   backend:
     build:
@@ -27,11 +36,14 @@ services:
       JWT_SECRET: change-this-local-secret-to-a-long-random-value-123456789
       NAVER_CLIENT_ID: ${NAVER_CLIENT_ID}
       NAVER_CLIENT_SECRET: ${NAVER_CLIENT_SECRET}
+      AI_SERVER_URL: http://ai:5000
     ports:
       - "8080:8080"
     depends_on:
       postgres:
         condition: service_healthy
+      ai:
+        condition: service_started
 
 volumes:
   spovisor-postgres-data:

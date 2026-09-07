@@ -12,7 +12,7 @@ final class SurveyRules {
     private static final Set<String> TRANSPORT = Set.of("대중교통+도보", "자차+도보", "도보 단독");
     private static final Set<String> MAX_TRAVEL_TIME = Set.of("30분", "1시간", "1시간 30분", "2시간", "3시간");
     private static final Set<String> WALKING_DISTANCE = Set.of("10분 이내", "20분 이내", "30분 이내", "상관없음");
-    private static final Set<String> COMPANIONS = Set.of("혼로여행", "친구와 여행", "연인과의 여행", "가족여행");
+    private static final Set<String> COMPANIONS = Set.of("홀로여행", "친구와 여행", "연인과의 여행", "가족여행");
     private static final Set<String> EXTRA_COMPANIONS = Set.of("영유아 동반", "고령자 동반", "장애인·교통약자 동반", "반려동물 동반");
     private static final Set<String> CONCEPTS = Set.of("미식 탐방형", "관광지 중심형", "로컬 힐링형");
     private static final Set<String> EXTRA_CONDITIONS = Set.of("실내 선호", "혼잡 피하기", "페이링 가능");

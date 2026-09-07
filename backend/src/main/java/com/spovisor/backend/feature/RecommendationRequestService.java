@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.spovisor.backend.user.User;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -11,10 +12,12 @@ import org.springframework.transaction.annotation.Transactional;
 public class RecommendationRequestService {
     private final RecommendationRequestRepository repository;
     private final ObjectMapper objectMapper;
+    private final ApplicationEventPublisher eventPublisher;
 
-    public RecommendationRequestService(RecommendationRequestRepository repository, ObjectMapper objectMapper) {
+    public RecommendationRequestService(RecommendationRequestRepository repository, ObjectMapper objectMapper, ApplicationEventPublisher applicationEventPublisher) {
         this.repository = repository;
         this.objectMapper = objectMapper;
+        this.eventPublisher = applicationEventPublisher;
     }
 
     @Transactional
@@ -22,9 +25,12 @@ public class RecommendationRequestService {
         JsonNode normalizedSurvey = SurveyNormalizer.normalize(survey);
         SurveyRules.validate(normalizedSurvey);
         try {
-            return RecommendationRequestResponse.from(repository.save(
+            RecommendationRequestEntity savedEntity = repository.save(
                     new RecommendationRequestEntity(user.getId(), objectMapper.writeValueAsString(normalizedSurvey))
-            ));
+            );
+            eventPublisher.publishEvent(new AiRecommendationEvent(savedEntity.getId()));
+            return RecommendationRequestResponse.from(savedEntity);
+
         } catch (JsonProcessingException exception) {
             throw new IllegalArgumentException("추천 요청을 저장할 수 없습니다.", exception);
         }
