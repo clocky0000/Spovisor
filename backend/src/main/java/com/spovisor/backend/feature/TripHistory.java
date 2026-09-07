@@ -24,17 +24,26 @@ public class TripHistory {
     private Integer rating;
     @Column(name = "visited_spot_ids", columnDefinition = "TEXT")
     private String visitedSpotIds;
+    @Column(name = "course_json", columnDefinition = "TEXT")
+    private String courseJson;
+    @Column(nullable = false, length = 20)
+    private String status;
+    @Column(name = "expires_at")
+    private LocalDateTime expiresAt;
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
     protected TripHistory() {}
 
-    public TripHistory(Long userId, String stadium, String matchName, LocalDate tripDate, String courseTitle) {
+    public TripHistory(Long userId, String stadium, String matchName, LocalDate tripDate, String courseTitle, String courseJson) {
         this.userId = userId;
         this.stadium = stadium;
         this.matchName = matchName;
         this.tripDate = tripDate;
         this.courseTitle = courseTitle;
+        this.courseJson = courseJson;
+        this.status = "ACTIVE";
+        this.expiresAt = LocalDateTime.now().plusHours(24);
         this.createdAt = LocalDateTime.now();
     }
 
@@ -46,9 +55,15 @@ public class TripHistory {
     public Integer getRating() { return rating; }
     public String getVisitedSpotIds() { return visitedSpotIds; }
     public LocalDateTime getCreatedAt() { return createdAt; }
+    public String getCourseJson() { return courseJson; }
+    public String getStatus() { return status; }
+    public LocalDateTime getExpiresAt() { return expiresAt; }
+
+    public void markExpired() { this.status = "EXPIRED"; }
 
     public void addFeedback(Integer rating, String visitedSpotIds) {
         this.rating = rating;
         this.visitedSpotIds = visitedSpotIds;
+        this.status = "COMPLETED";
     }
 }

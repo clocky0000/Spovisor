@@ -24,4 +24,8 @@ public class TripHistoryController {
 
     @PatchMapping("/{tripId}/feedback")
     public TripResponse feedback(@AuthenticationPrincipal User user, @PathVariable Long tripId, @Valid @RequestBody TripFeedbackRequest request) { return service.feedback(user, tripId, request); }
+
+    @DeleteMapping("/{tripId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void delete(@AuthenticationPrincipal User user, @PathVariable Long tripId) { service.delete(user, tripId); }
 }

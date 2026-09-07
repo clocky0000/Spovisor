@@ -21,13 +21,13 @@ services:
       context: ./spo_ai
     container_name: spovisor-ai
     env_file:
-      - ./spo_ai/.env
+      - spo_ai/.env
     ports:
       - "5000:5000"
 
   backend:
     build:
-      context: ./backend
+      context: backend
     container_name: spovisor-backend
     environment:
       DB_URL: jdbc:postgresql://postgres:5432/spovisor

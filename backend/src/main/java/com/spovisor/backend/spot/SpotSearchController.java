@@ -20,4 +20,9 @@ public class SpotSearchController {
     public List<SpotSearchResponse> search(@RequestParam("q") String query) {
         return spotSearchService.search(query);
     }
+
+    @GetMapping("/images")
+    public List<SpotImageResponse> images(@RequestParam("q") String query) {
+        return spotSearchService.searchImages(query);
+    }
 }

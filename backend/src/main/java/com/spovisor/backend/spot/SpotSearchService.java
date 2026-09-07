@@ -67,6 +67,41 @@ public class SpotSearchService {
         return results;
     }
 
+    public List<SpotImageResponse> searchImages(String query) {
+        String normalized = query == null ? "" : query.trim();
+        if (normalized.length() < 2) {
+            throw new IllegalArgumentException("장소명은 두 글자 이상 입력해주세요.");
+        }
+        if (clientId.isBlank() || clientSecret.isBlank()) {
+            throw new IllegalStateException("네이버 검색 API 인증 정보가 설정되지 않았습니다.");
+        }
+
+        String uri = UriComponentsBuilder.fromPath("/v1/search/image")
+                .queryParam("query", normalized)
+                .queryParam("display", 3)
+                .queryParam("start", 1)
+                .queryParam("sort", "sim")
+                .build()
+                .toUriString();
+        JsonNode root = restClient.get()
+                .uri(uri)
+                .header("X-Naver-Client-Id", clientId)
+                .header("X-Naver-Client-Secret", clientSecret)
+                .header(HttpHeaders.ACCEPT, "application/json")
+                .retrieve()
+                .body(JsonNode.class);
+
+        List<SpotImageResponse> results = new ArrayList<>();
+        if (root == null || !root.has("items")) return results;
+        for (JsonNode item : root.get("items")) {
+            String imageUrl = item.path("link").asText("");
+            String thumbnailUrl = item.path("thumbnail").asText("");
+            if (imageUrl.isBlank() && thumbnailUrl.isBlank()) continue;
+            results.add(new SpotImageResponse(imageUrl, thumbnailUrl, item.path("title").asText("")));
+        }
+        return results;
+    }
+
     private static String clean(String value) {
         return value == null ? "" : value.replaceAll("<[^>]+>", "").trim();
     }
