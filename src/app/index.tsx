@@ -1,4 +1,5 @@
 import * as Location from 'expo-location';
+import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import {
   ArrowLeft,
@@ -23,9 +24,10 @@ import {
   User,
   X
 } from 'lucide-react-native';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   Alert,
   Modal,
   ScrollView,
@@ -35,7 +37,9 @@ import {
   TouchableOpacity,
   View
 } from 'react-native';
+import Svg, { Polyline } from 'react-native-svg';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { OFFICIAL_GAMES, type ScheduleGame } from '../schedule';
 
 import {
   addFavoritePlace,
@@ -43,26 +47,24 @@ import {
   clearAuthSession,
   createRecommendationRequest,
   createTrip,
+  deleteTrip,
   deleteFavoritePlace,
   deleteMyAccount,
-  deleteSavedCourse,
   getMyProfile,
   getRecommendationRequestStatus,
   listFavoritePlaces,
   listFavoriteTeams,
-  listSavedCourses,
   listTrips,
   loadAuthSession,
   replaceFavoriteTeams,
   saveAuthSession,
-  saveCourse,
   saveUserSurvey,
   searchSpots,
+  searchSpotImages,
   submitTripFeedback,
   updateMyProfile,
   type FavoritePlace,
   type FavoriteTeam,
-  type SavedCourse,
   type SpotSearchResult,
   type Trip,
   type UserProfile,
@@ -75,7 +77,7 @@ import {
 type LoginScreenType = 'splash' | 'idLogin';
 
 type Sport = 'baseball' | 'soccer' | 'volleyball';
-type TabType = 'home' | 'course' | 'saved' | 'my';
+type TabType = 'home' | 'course' | 'my';
 type MyPageSection = 'menu' | 'account' | 'teams' | 'trips' | 'support';
 type FlowStep =
   | 'home'
@@ -92,16 +94,7 @@ type FlowStep =
   | 'presetCourseDetail'
   | 'customizeMascot';
 
-interface Game {
-  id: number;
-  sport: Sport;
-  home: string;
-  away: string;
-  homeEmoji: string;
-  stadium: string;
-  time: string;
-  date: string;
-}
+type Game = ScheduleGame;
 
 const currentDateKey = (() => {
   const now = new Date();
@@ -109,10 +102,25 @@ const currentDateKey = (() => {
 })();
 
 const TEAM_OPTIONS: { sport: Sport; label: string; teams: string[] }[] = [
-  { sport: 'baseball', label: '야구', teams: ['LG', '두산', '키움', 'SSG', 'kt', 'KIA', '삼성', '롯데', 'NC', '한화'] },
-  { sport: 'soccer', label: '축구', teams: ['FC 서울', '전북 현대', '울산 HD', '수원 삼성', '수원FC', '대전 하나', '인천 유나이티드', '포항 스틸러스', '제주 SK', '광주FC', '강원FC', '대구FC'] },
-  { sport: 'volleyball', label: '배구', teams: ['대한항공', '우리카드', '현대캐피탈', '삼성화재', 'OK저축은행', 'KB손해보험'] },
+  { sport: 'baseball', label: '야구', teams: ['LG', '키움', '삼성', 'KIA', 'KT', 'SSG', 'NC', '롯데', '한화', '두산'] },
+  { sport: 'soccer', label: '축구', teams: [
+    '울산 HD', 'FC서울', '인천 유나이티드', '부천FC1995', '대전하나시티즌', 'FC안양',
+    '강원FC', '전북 현대', '광주FC', '제주 SK', '포항 스틸러스', '김천상무', '대구FC',
+    '용인FC', '서울 이랜드', '안산 그리너스', '화성FC', '충남아산FC', '충북청주FC',
+    '경남FC', '성남FC', '전남 드래곤즈', '김포FC', '부산 아이파크', '김해FC', '수원FC',
+    '천안시티FC', '수원삼성',
+  ] },
+  { sport: 'volleyball', label: '배구', teams: [
+    '대한항공', '현대캐피탈', 'GS칼텍스', '한국도로공사', '흥국생명', 'SOOP',
+    '우리카드', '삼성화재', 'OK저축은행', 'KB손해보험',
+  ] },
 ];
+
+const SPORT_DOT_COLORS: Record<Sport, string> = {
+  baseball: '#5B44E8',
+  soccer: '#EF4444',
+  volleyball: '#10B981',
+};
 
 interface CourseSpot {
   id: number;
@@ -141,6 +149,63 @@ interface Course {
   description: string;
   spots: CourseSpot[];
   saved: boolean;
+}
+
+type MapRoutePoint = { x: number; y: number };
+
+const getMapRoutePoints = (spots: CourseSpot[]): MapRoutePoint[] => {
+  const coordinates = spots.map((spot) => ({
+    longitude: Number(spot.map_x),
+    latitude: Number(spot.map_y),
+  }));
+  const hasCoordinates = coordinates.every((coordinate) => Number.isFinite(coordinate.longitude) && Number.isFinite(coordinate.latitude) && coordinate.longitude !== 0 && coordinate.latitude !== 0);
+
+  if (!hasCoordinates) {
+    return spots.map((_, index) => ({
+      x: spots.length <= 1 ? 50 : 14 + (index / (spots.length - 1)) * 72,
+      y: spots.length <= 1 ? 50 : 28 + ((index % 2) * 36),
+    }));
+  }
+
+  const longitudes = coordinates.map((coordinate) => coordinate.longitude);
+  const latitudes = coordinates.map((coordinate) => coordinate.latitude);
+  const minLongitude = Math.min(...longitudes);
+  const maxLongitude = Math.max(...longitudes);
+  const minLatitude = Math.min(...latitudes);
+  const maxLatitude = Math.max(...latitudes);
+  const longitudeRange = Math.max(maxLongitude - minLongitude, 0.002);
+  const latitudeRange = Math.max(maxLatitude - minLatitude, 0.002);
+
+  return coordinates.map((coordinate) => ({
+    x: 14 + ((coordinate.longitude - minLongitude) / longitudeRange) * 72,
+    y: 18 + ((maxLatitude - coordinate.latitude) / latitudeRange) * 64,
+  }));
+};
+
+function MapRouteOverlay({ spots }: { spots: CourseSpot[] }) {
+  const points = getMapRoutePoints(spots);
+  if (points.length === 0) return null;
+
+  return (
+    <View pointerEvents="none" style={styles.mapRouteOverlay}>
+      <Svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none">
+        <Polyline
+          points={points.map((point) => `${point.x},${point.y}`).join(' ')}
+          fill="none"
+          stroke="#5B44E8"
+          strokeWidth="1.4"
+          strokeDasharray="2.5 1.4"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </Svg>
+      {points.map((point, index) => (
+        <View key={`map-marker-${index}`} style={[styles.mapRouteMarker, { left: `${point.x}%`, top: `${point.y}%` }]}>
+          <Text style={styles.mapRouteMarkerText}>{index + 1}</Text>
+        </View>
+      ))}
+    </View>
+  );
 }
 
 interface PresetCourse {
@@ -208,11 +273,8 @@ const CONCEPT_PREVIEWS: Record<string, {
 // Mock Data
 // ─────────────────────────────────────────────────────────
 
-const GAMES: Game[] = [
-  { id: 1, sport: 'baseball', home: 'LG', away: '두산', homeEmoji: '🔴', stadium: '잠실야구장', time: '18:30', date: currentDateKey },
-  { id: 2, sport: 'baseball', home: 'kt', away: 'NC', homeEmoji: '⚡', stadium: '수원 KT위즈파크', time: '18:30', date: currentDateKey },
-  { id: 3, sport: 'soccer', home: 'FC 서울', away: '전북 현대', homeEmoji: '⚽', stadium: '서울 월드컵경기장', time: '19:00', date: currentDateKey },
-];
+const GAMES: Game[] = OFFICIAL_GAMES;
+const initialGame = GAMES.find((game) => game.date === currentDateKey) ?? GAMES[0];
 
 function dateKey(year: number, monthIndex: number, day: number) {
   return `${year}-${String(monthIndex + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
@@ -228,8 +290,30 @@ function aiStadiumName(value: string) {
     '잠실야구장': '서울종합운동장야구장',
     '서울 월드컵경기장': '서울월드컵경기장',
     '수원 KT위즈파크': '수원KT위즈파크',
+    '수원 KT 위즈 파크': '수원KT위즈파크',
+    '대구 삼성 라이온즈 파크': '대구삼성라이온즈파크',
+    '대구iM뱅크PARK': 'DGB대구은행파크',
+    '광주-기아 챔피언스 필드': '광주-기아챔피언스필드',
+    '대전 한화생명 볼파크': '대전한화생명볼파크',
+    '인천 SSG랜더스필드': '인천SSG랜더스필드',
+    '창원 NC파크': '창원NC파크',
+    '인천 계양체육관': '계양체육관',
+    '서울 장충체육관': '장충체육관',
+    '인천 삼산월드체육관': '인천삼산월드체육관',
+    '김천종합운동장': '김천종합스포츠타운',
   };
   return aliases[value] ?? value;
+}
+
+function normalizeTeamName(value: string) {
+  const compact = value.replace(/\s+/g, '').toLowerCase();
+  const aliases: Record<string, string> = {
+    kt: 'kt',
+    'fc서울': 'fc서울',
+    '대전하나': '대전하나시티즌',
+    '수원삼성': '수원삼성',
+  };
+  return aliases[compact] ?? compact;
 }
 
 const MOCK_COURSES: Course[] = [
@@ -467,7 +551,6 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
   const [tab, setTab] = useState<TabType>('home');
   const [flow, setFlow] = useState<FlowStep>('home');
   const [profile, setProfile] = useState<UserProfile>(initialUser);
-  const [savedCourses, setSavedCourses] = useState<SavedCourse[]>([]);
   const [tripList, setTripList] = useState<Trip[]>([]);
   const [favoriteTeams, setFavoriteTeams] = useState<FavoriteTeam[]>([]);
   const [favoritePlaces, setFavoritePlaces] = useState<FavoritePlace[]>([]);
@@ -478,6 +561,8 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
   const [favoriteTeamDraftSport, setFavoriteTeamDraftSport] = useState<Sport>('baseball');
   const [favoriteTeamDraftName, setFavoriteTeamDraftName] = useState('');
   const [favoriteTeamDraftNickname, setFavoriteTeamDraftNickname] = useState('');
+  const favoriteTeamSheetY = useRef(new Animated.Value(420)).current;
+  const favoriteTeamBackdropOpacity = useRef(new Animated.Value(0)).current;
   const [accountNicknameDraft, setAccountNicknameDraft] = useState(initialUser.nickname);
   const [accountCurrentPassword, setAccountCurrentPassword] = useState('');
   const [accountNewPassword, setAccountNewPassword] = useState('');
@@ -493,12 +578,12 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
   const [isLocating, setIsLocating] = useState(false);
   const [calendarMonth, setCalendarMonth] = useState(() => { const now = new Date(); return new Date(now.getFullYear(), now.getMonth(), 1); });
   const [selectedDate, setSelectedDate] = useState<string>(() => { const now = new Date(); return dateKey(now.getFullYear(), now.getMonth(), now.getDate()); });
-  const [selectedGame, setSelectedGame] = useState<Game | null>(GAMES[1]);
+  const [selectedGame, setSelectedGame] = useState<Game | null>(initialGame);
   const [gameViewMode, setGameViewMode] = useState<'all' | 'favorites'>('all');
 
   // Form State
-  const [selectedGameDate, setSelectedGameDate] = useState<string>(GAMES[1].date);
-  const [startTime, setStartTime] = useState<string>(GAMES[1].time);
+  const [selectedGameDate, setSelectedGameDate] = useState<string>(initialGame.date);
+  const [startTime, setStartTime] = useState<string>(initialGame.time);
   const [arrivalTime, setArrivalTime] = useState<string>('1시간 전');
   const [tripTiming, setTripTiming] = useState<string>('경기 전');
 
@@ -531,8 +616,16 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
   // AI 모델 연동 전까지는 추천 결과를 비워둡니다.
   const [courses, setCourses] = useState<Course[]>([]);
   const [selectedCourse, setSelectedCourse] = useState<Course>(MOCK_COURSES[0]);
+  const [spotImages, setSpotImages] = useState<Record<number, string[]>>({});
+  const [isLoadingSpotImages, setIsLoadingSpotImages] = useState(false);
   const [expandedCourseId, setExpandedCourseId] = useState<number | null>(1);
   const [selectedPreset, setSelectedPreset] = useState<PresetCourse>(PRESET_COURSES[0]);
+  const [selectedHistoryTrip, setSelectedHistoryTrip] = useState<Trip | null>(null);
+  const [deleteTripPrompt, setDeleteTripPrompt] = useState<Trip | null>(null);
+  const [expandedSupportItem, setExpandedSupportItem] = useState<'guide' | 'contact' | null>(null);
+  const [homeNotice, setHomeNotice] = useState<string | null>(null);
+  const [activeTripPromptOpen, setActiveTripPromptOpen] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
 
   // Modals & Feedback
   const [isChangeModalOpen, setIsChangeModalOpen] = useState(false);
@@ -548,8 +641,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
   const [excludeFilters, setExcludeFilters] = useState<string[]>([]);
 
   useEffect(() => {
-    Promise.all([listSavedCourses(), listTrips(), listFavoriteTeams(), listFavoritePlaces()]).then(([saved, trips, teams, places]) => {
-      setSavedCourses(saved);
+    Promise.all([listTrips(), listFavoriteTeams(), listFavoritePlaces()]).then(([trips, teams, places]) => {
       setTripList(trips);
       setFavoriteTeams(teams);
       setFavoritePlaces(places);
@@ -810,12 +902,107 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
   const visibleGames = useMemo(() => {
     if (gameViewMode === 'all') return calendarGames;
     if (favoriteTeams.length === 0) return [];
-    const names = new Set(favoriteTeams.map((team) => team.teamName));
-    return calendarGames.filter((game) => names.has(game.home) || names.has(game.away));
+    const names = new Set(favoriteTeams.map((team) => normalizeTeamName(team.teamName)));
+    return calendarGames.filter((game) => names.has(normalizeTeamName(game.home)) || names.has(normalizeTeamName(game.away)));
   }, [calendarGames, favoriteTeams, gameViewMode]);
   const previewConcept = concept ?? '미식 탐방형';
   const customRatioTotal = Object.values(customRatios).reduce((sum, value) => sum + (Number(value) || 0), 0);
   const accountHasChanges = accountNicknameDraft.trim() !== profile.nickname || accountCurrentPassword.length > 0 || accountNewPassword.length > 0;
+  const activeTrip = useMemo(() => tripList.find((trip) => trip.status === 'ACTIVE' && trip.course && (!trip.expiresAt || new Date(trip.expiresAt).getTime() > now)), [tripList, now]);
+  const completedTripList = useMemo(() => tripList.filter((trip) => trip.status !== 'ACTIVE' && trip.status !== 'EXPIRED'), [tripList]);
+  const selectedHistoryCourse = selectedHistoryTrip?.course && typeof selectedHistoryTrip.course === 'object' ? selectedHistoryTrip.course as Course : null;
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!favoriteTeamModalOpen) {
+      favoriteTeamSheetY.setValue(420);
+      favoriteTeamBackdropOpacity.setValue(0);
+      return;
+    }
+
+    favoriteTeamSheetY.setValue(420);
+    favoriteTeamBackdropOpacity.setValue(0);
+    Animated.parallel([
+      Animated.timing(favoriteTeamSheetY, { toValue: 0, duration: 280, useNativeDriver: true }),
+      Animated.timing(favoriteTeamBackdropOpacity, { toValue: 1, duration: 220, useNativeDriver: true }),
+    ]).start();
+  }, [favoriteTeamModalOpen, favoriteTeamBackdropOpacity, favoriteTeamSheetY]);
+
+  useEffect(() => {
+    if (!activeTrip?.course || typeof activeTrip.course !== 'object') return;
+    setSelectedCourse(activeTrip.course as Course);
+    setCurrentTripId(activeTrip.id);
+  }, [activeTrip]);
+
+  useEffect(() => {
+    const isCourseDetailVisible = flow === 'courseDetail' || (tab === 'course' && Boolean(activeTrip));
+    if (!isCourseDetailVisible || selectedCourse.spots.length === 0) return;
+
+    let cancelled = false;
+    setSpotImages({});
+    setIsLoadingSpotImages(true);
+    Promise.all(selectedCourse.spots.map(async (spot) => {
+      try {
+        const results = await searchSpotImages(spot.name);
+        return [spot.id, results.map((item) => item.thumbnailUrl || item.imageUrl).filter(Boolean)] as const;
+      } catch {
+        return [spot.id, []] as const;
+      }
+    })).then((entries) => {
+      if (!cancelled) setSpotImages(Object.fromEntries(entries));
+    }).finally(() => {
+      if (!cancelled) setIsLoadingSpotImages(false);
+    });
+
+    return () => { cancelled = true; };
+  }, [activeTrip, flow, selectedCourse.id, selectedCourse.routeText, tab]);
+
+  const renderSpotImages = (spot: CourseSpot) => {
+    const urls = spotImages[spot.id] ?? [];
+    if (isLoadingSpotImages && urls.length === 0) {
+      return <View style={styles.imageLoadingBox}><ActivityIndicator size="small" color="#5B44E8" /><Text style={styles.imageLoadingText}>사진을 불러오는 중이에요</Text></View>;
+    }
+    if (urls.length === 0) return <Text style={styles.spotImageEmptyText}>이 장소의 사진을 찾지 못했어요.</Text>;
+    return <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, marginTop: 12 }}>{urls.map((url, imageIndex) => <Image key={`${spot.id}-${imageIndex}`} source={{ uri: url }} style={styles.spotGalleryImage} contentFit="cover" transition={180} />)}</ScrollView>;
+  };
+
+  const handleSelectGame = (game: Game) => {
+    if (game.date < currentDateKey) {
+      Alert.alert('이미 지난 날짜 입니다', '지난 경기 일정으로는 코스를 생성할 수 없습니다. 다른 날짜의 경기를 선택해주세요.');
+      return;
+    }
+
+    setSelectedGame(game);
+    setSelectedGameDate(game.date);
+    setStartTime(game.time);
+
+    if (activeTrip) {
+      setActiveTripPromptOpen(true);
+      return;
+    }
+
+    setFlow('gameInfo');
+  };
+
+  const handleReplaceActiveTrip = async () => {
+    if (!activeTrip) return;
+    setIsSubmitting(true);
+    try {
+      await deleteTrip(activeTrip.id);
+      setTripList((previous) => previous.filter((trip) => trip.id !== activeTrip.id));
+      setCurrentTripId(null);
+      setActiveTripPromptOpen(false);
+      setFlow('gameInfo');
+    } catch (error) {
+      Alert.alert('삭제 실패', error instanceof Error ? error.message : '진행 중인 여행을 삭제하지 못했습니다.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   const handleCreateCourseRequest = async () => {
     setIsSubmitting(true);
@@ -839,7 +1026,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
             try {
               const aiResult = JSON.parse(statusRes.resultJson);
               
-              let rawCourses = [];
+              let rawCourses: any[] = [];
               if (Array.isArray(aiResult)) rawCourses = aiResult;
               else if (aiResult.courses && Array.isArray(aiResult.courses)) rawCourses = aiResult.courses;
               else if (aiResult.data && Array.isArray(aiResult.data)) rawCourses = aiResult.data;
@@ -926,17 +1113,6 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
     }
   };
 
-  const handleSaveCurrentCourse = async () => {
-    setIsSubmitting(true);
-    try {
-      const saved = await saveCourse({ title: selectedCourse.title, stadium: selectedGame?.stadium, courseType: selectedCourse.conceptTag, course: selectedCourse });
-      setSavedCourses((previous) => [saved, ...previous]);
-      Alert.alert('저장 완료', '코스를 저장했습니다.');
-    } catch (error) {
-      Alert.alert('저장 실패', error instanceof Error ? error.message : '코스를 저장하지 못했습니다.');
-    } finally { setIsSubmitting(false); }
-  };
-
   const handleConfirmTrip = async () => {
     setIsSubmitting(true);
     try {
@@ -945,10 +1121,14 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
         matchName: selectedGame ? `${selectedGame.home} vs ${selectedGame.away}` : undefined,
         tripDate: selectedGame?.date,
         courseTitle: selectedCourse.title,
+        course: selectedCourse,
       });
       setCurrentTripId(trip.id);
       setTripList((previous) => [trip, ...previous]);
-      setFlow('feedbackReview');
+      setTab('home');
+      setFlow('home');
+      setHomeNotice('코스가 확정됐어요. 코스 탭에서 진행 중인 동선을 확인해주세요.');
+      setTimeout(() => setHomeNotice(null), 3600);
     } catch (error) {
       Alert.alert('여행 기록 실패', error instanceof Error ? error.message : '여행 기록을 저장하지 못했습니다.');
     } finally { setIsSubmitting(false); }
@@ -964,6 +1144,35 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
     } catch (error) {
       Alert.alert('피드백 실패', error instanceof Error ? error.message : '피드백을 저장하지 못했습니다.');
     } finally { setIsSubmitting(false); }
+  };
+
+  const handleCompleteActiveTrip = () => {
+    if (!activeTrip) return;
+    setCurrentTripId(activeTrip.id);
+    if (activeTrip.course && typeof activeTrip.course === 'object') setSelectedCourse(activeTrip.course as Course);
+    setTab('home');
+    setFlow('feedbackReview');
+  };
+
+  const handleDeleteTrip = (trip: Trip) => {
+    setDeleteTripPrompt(trip);
+  };
+
+  const handleConfirmDeleteTrip = async () => {
+    const trip = deleteTripPrompt;
+    if (!trip) return;
+
+    setIsSubmitting(true);
+    try {
+      await deleteTrip(trip.id);
+      setTripList((previous) => previous.filter((item) => item.id !== trip.id));
+      setSelectedHistoryTrip(null);
+      setDeleteTripPrompt(null);
+    } catch (error) {
+      Alert.alert('삭제 실패', error instanceof Error ? error.message : '기록을 삭제하지 못했습니다.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleProfileSave = async (changes: { nickname?: string; mascot?: string; themeColor?: string }, onSuccess?: () => void) => {
@@ -1102,11 +1311,19 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                         const dayKey = dateKey(calendarMonth.getFullYear(), calendarMonth.getMonth(), day);
                         const isSelected = selectedDate === dayKey;
                         const isToday = dayKey === currentDateKey;
+                        const gameSports = Array.from(new Set(
+                          GAMES.filter((game) => game.date === dayKey).map((game) => game.sport),
+                        ));
                         return (
                           <TouchableOpacity key={day} style={styles.dayCell} onPress={() => { setSelectedDate(dayKey); setGameViewMode('all'); }}>
                             <View style={[styles.dayCircle, isToday && styles.todayDayCircle, isSelected && styles.selectedDayCircle]}>
                               <Text style={[styles.dayText, isSelected && styles.selectedDayText]}>{day}</Text>
                             </View>
+                            {gameSports.length > 0 && (
+                              <View style={styles.gameDayDots}>
+                                {gameSports.map((sport) => <View key={sport} style={[styles.gameDayDot, { backgroundColor: SPORT_DOT_COLORS[sport] }]} />)}
+                              </View>
+                            )}
                           </TouchableOpacity>
                         );
                       })}
@@ -1134,7 +1351,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                   {gameViewMode === 'favorites' && favoriteTeams.length === 0 && <Text style={styles.emptyListText}>설정한 관심 구단이 없습니다.</Text>}
                   {visibleGames.length === 0 && !(gameViewMode === 'favorites' && favoriteTeams.length === 0) && <Text style={styles.emptyListText}>해당 날짜에 경기가 없습니다.</Text>}
                   {visibleGames.map((game) => (
-                    <TouchableOpacity key={game.id} style={styles.gameCard} onPress={() => { setSelectedGame(game); setSelectedGameDate(game.date); setStartTime(game.time); setFlow('gameInfo'); }}>
+                    <TouchableOpacity key={game.id} style={styles.gameCard} onPress={() => handleSelectGame(game)}>
                       <View style={styles.rowBetween}>
                         <View style={styles.sportBadge}><Text style={styles.sportBadgeText}>{game.sport === 'baseball' ? '⚾ 야구' : game.sport === 'soccer' ? '⚽ 축구' : '🏐 배구'}</Text></View>
                         <View style={styles.rowCenter}><Clock size={12} color="#6B7280" /><Text style={{ fontSize: 12, color: '#6B7280' }}>{game.time}</Text></View>
@@ -1563,7 +1780,9 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                   </ScrollView>
                 </View>
 
-                <ScrollView style={styles.flex1} contentContainerStyle={{ padding: 20, gap: 16 }}>
+                  <ScrollView style={styles.flex1} contentContainerStyle={{ padding: 20, gap: 16 }}>
+                  {courses.length === 0 && isSubmitting && <View style={styles.aiEmptyCard}><ActivityIndicator size="large" color="#5B44E8" /><Text style={{ marginTop: 12, fontSize: 14, fontWeight: '800', color: '#374151' }}>맞춤 코스를 만들고 있어요</Text><Text style={{ marginTop: 4, fontSize: 12, color: '#6B7280' }}>잠시만 기다려주세요. 조건에 맞는 장소를 찾는 중이에요.</Text></View>}
+                  {courses.length === 0 && !isSubmitting && <View style={styles.aiEmptyCard}><Text style={{ fontSize: 28 }}>🗺️</Text><Text style={{ marginTop: 10, fontSize: 14, fontWeight: '800', color: '#374151' }}>추천 코스를 불러오지 못했어요</Text><Text style={{ marginTop: 4, fontSize: 12, color: '#6B7280' }}>홈으로 돌아가 다시 시도해주세요.</Text></View>}
                   {courses.map((course, index) => {
                     const safeId = course.id ?? index;
                     const isExpanded = expandedCourseId === safeId;
@@ -1652,6 +1871,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                     src={`https://maps.google.com/maps?q=${Number(selectedCourse.spots[0]?.map_y) || 37.5121513},${Number(selectedCourse.spots[0]?.map_x) || 127.0719095}&z=14&output=embed`}
                     style={{ width: '100%', height: '100%', border: 0 }}
                   />
+                  <MapRouteOverlay spots={selectedCourse.spots} />
                 </View>
 
                 {/* 하단 타임라인 바텀시트 */}
@@ -1679,13 +1899,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                           <Text style={styles.timelineItemDescGreyNew}>추천 테마: {spot.category}</Text>
 
                           {/* 카테고리에 따라 갤러리 렌더링 */}
-                          {(spot.category.includes('음식') || spot.category.includes('맛집') || spot.category.includes('카페') || spot.category.includes('관광')) && (
-                            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, marginTop: 12 }}>
-                              <View style={styles.mockImageRectSmall} />
-                              <View style={styles.mockImageRectSmall} />
-                              <View style={styles.mockImageRectSmall} />
-                            </ScrollView>
-                          )}
+                          {(spot.category.includes('음식') || spot.category.includes('맛집') || spot.category.includes('카페') || spot.category.includes('관광') || spot.category.includes('쇼핑')) && renderSpotImages(spot)}
 
                           {/* 이동 수단 가이드 */}
                           {idx < arr.length - 1 && (
@@ -1706,10 +1920,6 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                   <View style={styles.detailFixedFooter}>
                     <TouchableOpacity style={styles.purpleBtn} onPress={handleConfirmTrip} disabled={isSubmitting}>
                       {isSubmitting ? <ActivityIndicator color="#FFF" /> : <Text style={styles.purpleBtnText}>코스 확정하기</Text>}
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.bookmarkOutlineBtnNew} onPress={handleSaveCurrentCourse} disabled={isSubmitting}>
-                      <Bookmark size={14} color="#5B44E8" />
-                      <Text style={{ color: '#5B44E8', fontWeight: 'bold', fontSize: 13 }}>코스 저장하기</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -1803,147 +2013,60 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
         )}
 
         {/* ========================================================= */}
-        {/* TAB 2: 이동 코스 */}
+        {/* TAB 2: 확정된 이동 코스 */}
         {/* ========================================================= */}
         {tab === 'course' && (
-          <>
-            {flow === 'presetCourseDetail' ? (
-              /* 이동 코스 상세 화면 */
-              <View style={styles.flex1}>
-                <View style={styles.purpleHeader}>
-                  <TouchableOpacity onPress={() => setFlow('home')} style={styles.backBtn}>
-                    <ArrowLeft size={18} color="#FFF" />
-                    <Text style={{ color: '#FFF', fontSize: 13 }}>뒤로가기</Text>
-                  </TouchableOpacity>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 8 }}>
-                    <View style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.2)', justifyContent: 'center', alignItems: 'center' }}>
-                      <Text style={{ fontSize: 20 }}>🚆</Text>
-                    </View>
-                    <View>
-                      <Text style={{ fontSize: 18, fontWeight: '900', color: '#FFF' }}>{selectedPreset.title}</Text>
-                      <Text style={{ fontSize: 12, color: '#E0E7FF', marginTop: 2 }}>{selectedPreset.routeText}</Text>
-                    </View>
-                  </View>
-
-                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 16 }}>
-                    <View style={styles.statBoxCard}><Text style={{ fontSize: 10, color: '#E0E7FF' }}>⏱️ 소요 시간</Text><Text style={styles.statBoxMain}>{selectedPreset.time}</Text></View>
-                    <View style={styles.statBoxCard}><Text style={{ fontSize: 10, color: '#E0E7FF' }}>📍 거리</Text><Text style={styles.statBoxMain}>{selectedPreset.distance}</Text></View>
-                    <View style={styles.statBoxCard}><Text style={{ fontSize: 10, color: '#E0E7FF' }}>⚡ 난이도</Text><Text style={styles.statBoxMain}>{selectedPreset.difficulty}</Text></View>
-                  </View>
+          <View style={styles.flex1}>
+            {activeTrip ? (
+              <View style={[styles.flex1, { backgroundColor: '#F8FAFC' }]}>
+                <View style={styles.detailTopHeader}>
+                  <TouchableOpacity onPress={() => { setTab('home'); setFlow('home'); }} style={{ padding: 8 }}><ArrowLeft size={24} color="#111827" /></TouchableOpacity>
+                  <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#111827' }}>여행 지도</Text>
+                  <View style={styles.greenNavTag}><View style={styles.greenDot} /><Text style={{ fontSize: 10, color: '#059669', fontWeight: 'bold' }}>경로 안내 중</Text></View>
                 </View>
-
-                <ScrollView style={styles.flex1} contentContainerStyle={{ padding: 20, gap: 20 }}>
-                  <View style={styles.rowBetween}>
-                    <Text style={styles.sectionTitle}>이동 경로</Text>
-                    <View style={{ flexDirection: 'row', gap: 8 }}>
-                      <TouchableOpacity style={styles.saveBadgeBtn}><Bookmark size={12} color="#5B44E8" /><Text style={{ fontSize: 11, color: '#5B44E8', fontWeight: 'bold' }}>저장됨</Text></TouchableOpacity>
-                      <TouchableOpacity style={styles.shareBadgeBtn}><Share2 size={12} color="#6B7280" /><Text style={{ fontSize: 11, color: '#6B7280' }}>공유</Text></TouchableOpacity>
-                    </View>
-                  </View>
-
-                  <View style={{ gap: 12 }}>
-                    {selectedPreset.nodes.map((nodeName, idx) => (
-                      <View key={idx} style={styles.mapListRow}>
-                        <View style={[styles.mapListNum, { backgroundColor: '#5B44E8' }]}><Text style={{ color: '#FFF', fontWeight: 'bold' }}>{idx + 1}</Text></View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={{ fontWeight: 'bold', fontSize: 14 }}>{nodeName}</Text>
-                          <Text style={{ fontSize: 11, color: '#6B7280', marginTop: 2 }}>{idx === 0 ? '도보 5분' : idx === 1 ? '환승 3분' : '버스 12분'}</Text>
+                <View style={styles.detailMapArea}>
+                  <iframe title="active-course-map" src={`https://maps.google.com/maps?q=${Number(selectedCourse.spots[0]?.map_y) || 37.5121513},${Number(selectedCourse.spots[0]?.map_x) || 127.0719095}&z=14&output=embed`} style={{ width: '100%', height: '100%', border: 0 }} />
+                  <MapRouteOverlay spots={selectedCourse.spots} />
+                </View>
+                <View style={[styles.detailTimelineSheet, styles.activeCourseTimelineSheet]}>
+                  <View style={styles.modalDragHandle} />
+                  <Text style={styles.bottomSheetTitleCenter}>날짜별 동선을 지도에서 확인</Text>
+                  <ScrollView style={styles.flex1} contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
+                    {selectedCourse.spots.map((spot, idx, arr) => (
+                      <View key={`active-timeline-${idx}`} style={styles.timelineItemRow}>
+                        <View style={styles.timelineLeftCol}><View style={styles.timelineOrangePin}><Text style={styles.timelinePinTextWhite}>{idx + 1}</Text></View>{idx < arr.length - 1 && <View style={styles.timelineVerticalLineSolid} />}</View>
+                        <View style={styles.timelineContentColNew}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}><Text style={styles.categoryTextGreyNew}>{spot.category || '장소'}</Text><Text style={styles.timelineItemTitleLargeNew}>{spot.name}</Text></View>
+                          <Text style={styles.timelineItemDescGreyNew}>추천 테마: {spot.category}</Text>
+                          {(spot.category.includes('음식') || spot.category.includes('맛집') || spot.category.includes('카페') || spot.category.includes('관광') || spot.category.includes('쇼핑')) && renderSpotImages(spot)}
+                          {idx < arr.length - 1 && <View style={styles.moveInfoBoxClear}><Text style={styles.moveInfoTextBold}>{transport.includes('자차') ? '🚗' : transport.includes('대중교통') ? '🚌' : '🚶'} 다음 장소까지 {spot.moveText || (transport.includes('자차') ? '차량 약 10분' : transport.includes('대중교통') ? '대중교통 약 20분' : '도보 약 15분')}</Text></View>}
                         </View>
                       </View>
                     ))}
-                  </View>
-
-                  <Text style={styles.sectionTitle}>주변 명소</Text>
-                  <View style={{ flexDirection: 'row', gap: 10 }}>
-                    <View style={styles.spotCountCard}><Coffee size={20} color="#D97706" /><Text style={{ fontWeight: 'bold', fontSize: 14, marginTop: 6 }}>카페</Text><Text style={{ fontSize: 11, color: '#6B7280' }}>12곳</Text></View>
-                    <View style={styles.spotCountCard}><ShoppingBag size={20} color="#5B44E8" /><Text style={{ fontWeight: 'bold', fontSize: 14, marginTop: 6 }}>쇼핑</Text><Text style={{ fontSize: 11, color: '#6B7280' }}>8곳</Text></View>
-                    <View style={styles.spotCountCard}><Camera size={20} color="#EF4444" /><Text style={{ fontWeight: 'bold', fontSize: 14, marginTop: 6 }}>포토존</Text><Text style={{ fontSize: 11, color: '#6B7280' }}>5곳</Text></View>
-                  </View>
-                </ScrollView>
+                  </ScrollView>
+                  <View style={styles.detailFixedFooter}><TouchableOpacity style={styles.purpleBtn} onPress={handleCompleteActiveTrip} disabled={isSubmitting}>{isSubmitting ? <ActivityIndicator color="#FFF" /> : <Text style={styles.purpleBtnText}>코스 완료</Text>}</TouchableOpacity></View>
+                </View>
               </View>
             ) : (
-              /* 이동 코스 리스트 */
-              <View style={styles.flex1}>
+              <>
                 <View style={styles.header}>
-                  <View style={styles.rowBetween}>
-                    <Text style={styles.headerSub}>이동 코스</Text>
-                    <TouchableOpacity style={styles.filterBtn}><Filter size={14} color="#5B44E8" /><Text style={{ fontSize: 12, color: '#5B44E8', fontWeight: 'bold' }}>필터</Text></TouchableOpacity>
-                  </View>
-                  <Text style={styles.headerDesc}>경기장별 최적 이동 경로를 선택하세요</Text>
+                  <Text style={styles.headerSub}>내 코스</Text>
+                  <Text style={styles.headerDesc}>확정한 코스는 완주하거나 24시간이 지나면 사라져요.</Text>
                 </View>
-
-                <ScrollView style={styles.flex1} contentContainerStyle={{ padding: 20, gap: 12 }}>
-                  {PRESET_COURSES.map((item) => (
-                    <TouchableOpacity key={item.id} style={styles.presetCard} onPress={() => { setSelectedPreset(item); setFlow('presetCourseDetail'); }}>
-                      <View style={{ flexDirection: 'row', gap: 12 }}>
-                        <View style={styles.presetIconCircle}><Text style={{ fontSize: 20 }}>{item.icon}</Text></View>
-                        <View style={{ flex: 1 }}>
-                          <View style={styles.rowBetween}>
-                            <Text style={{ fontSize: 15, fontWeight: '900' }}>{item.title}</Text>
-                            <ChevronRight size={16} color="#9CA3AF" />
-                          </View>
-                          <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 2 }}>{item.routeText}</Text>
-                          <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center', marginTop: 8 }}>
-                            <Text style={{ fontSize: 11, color: '#6B7280' }}>⏱️ {item.time}</Text>
-                            <Text style={{ fontSize: 11, color: '#6B7280' }}>📍 {item.distance}</Text>
-                            <View style={[styles.diffBadge, item.difficulty === '쉬움' ? styles.diffEasy : styles.diffNormal]}>
-                              <Text style={{ fontSize: 10, fontWeight: 'bold', color: item.difficulty === '쉬움' ? '#10B981' : '#D97706' }}>{item.difficulty}</Text>
-                            </View>
-                            <Text style={{ fontSize: 11, fontWeight: 'bold', color: '#F59E0B', marginLeft: 'auto' }}>★ {item.rating}</Text>
-                          </View>
-                          <Text style={{ fontSize: 11, color: '#5B44E8', marginTop: 8 }}>• {item.nodes.join(' ➔ ')}</Text>
-                        </View>
-                      </View>
-                    </TouchableOpacity>
-                  ))}
+                <ScrollView style={styles.flex1} contentContainerStyle={{ padding: 20, gap: 14 }}>
+                <View style={styles.emptyCoursePanel}>
+                  <Text style={{ fontSize: 38 }}>🗺️</Text>
+                  <Text style={styles.emptyCourseTitle}>아직 코스를 생성하지 않았어요!</Text>
+                  <Text style={styles.emptyCourseText}>홈에서 경기를 선택하고 나만의 여행 코스를 만들어보세요.</Text>
+                </View>
                 </ScrollView>
-              </View>
+              </>
             )}
-          </>
-        )}
-
-        {/* ========================================================= */}
-        {/* TAB 3: 저장된 코스 */}
-        {/* ========================================================= */}
-        {tab === 'saved' && (
-          <View style={styles.flex1}>
-            <View style={styles.header}>
-              <Text style={styles.headerSub}>저장된 코스</Text>
-              <Text style={styles.headerDesc}>내가 저장한 경기장 이동 코스</Text>
-            </View>
-
-            <ScrollView style={styles.flex1} contentContainerStyle={{ padding: 20, gap: 12 }}>
-              <View style={styles.savedBanner}>
-                <Text style={{ fontSize: 24 }}>🏆</Text>
-                <View>
-                  <Text style={{ fontSize: 16, fontWeight: '900', color: '#FFF' }}>총 {savedCourses.length}개의 코스 저장</Text>
-                  <Text style={{ fontSize: 12, color: '#E0E7FF', marginTop: 2 }}>저장한 코스를 다시 확인할 수 있어요.</Text>
-                </View>
-              </View>
-
-              {savedCourses.length === 0 && <Text style={styles.emptyListText}>아직 저장한 코스가 없습니다.</Text>}
-              {savedCourses.map((item) => (
-                <View key={item.id} style={styles.savedCardRow}>
-                  <View style={styles.savedIconCircle}><Text style={{ fontSize: 20 }}>🏆</Text></View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 15, fontWeight: 'bold' }}>{item.stadium ?? '경기장'}</Text>
-                    <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 2 }}>{item.title}</Text>
-                  </View>
-                  <View style={{ alignItems: 'flex-end', gap: 4 }}>
-                    <Text style={{ fontSize: 11, color: '#9CA3AF' }}>{new Date(item.savedAt).toLocaleDateString()}</Text>
-                    <TouchableOpacity onPress={async () => {
-                      try { await deleteSavedCourse(item.id); setSavedCourses((previous) => previous.filter((course) => course.id !== item.id)); }
-                      catch (error) { Alert.alert('삭제 실패', error instanceof Error ? error.message : '코스를 삭제하지 못했습니다.'); }
-                    }}><Heart size={18} color="#EF4444" fill="#EF4444" /></TouchableOpacity>
-                  </View>
-                </View>
-              ))}
-            </ScrollView>
           </View>
         )}
 
         {/* ========================================================= */}
-        {/* TAB 4: MY 페이지 & 마스코드/배경 설정 */}
+        {/* TAB 3: MY 페이지 & 마스코드/배경 설정 */}
         {/* ========================================================= */}
         {tab === 'my' && (
           <>
@@ -1968,7 +2091,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                 <View style={styles.myHeaderPurple}>
                   <View style={styles.rowBetween}><View style={styles.rowCenter}><Text style={{ fontSize: 18 }}>🏆</Text><Text style={{ fontSize: 18, fontWeight: '900', color: '#FFF' }}>스포바이저</Text></View></View>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16, marginTop: 16 }}><TouchableOpacity accessibilityLabel="아이콘 변경" style={[styles.avatarPurpleCircle, { backgroundColor: selectedBgColor.hex }]} onPress={() => setFlow('customizeMascot')}><Text style={{ fontSize: 28 }}>{selectedMascot.emoji}</Text><View style={styles.editBadge}><Pencil size={10} color="#FFF" /></View></TouchableOpacity><View><Text style={{ fontSize: 20, fontWeight: '900', color: '#FFF' }}>{profile.nickname}</Text><Text style={{ fontSize: 12, color: '#E0E7FF', marginTop: 2 }}>{profile.email}</Text></View></View>
-                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 20 }}><View style={styles.myStatBox}><Text style={{ fontSize: 18, fontWeight: '900', color: '#FFF' }}>{new Set(tripList.map((trip) => trip.stadium)).size}</Text><Text style={{ fontSize: 10, color: '#E0E7FF' }}>방문 경기장</Text></View><View style={styles.myStatBox}><Text style={{ fontSize: 18, fontWeight: '900', color: '#FFF' }}>{savedCourses.length}</Text><Text style={{ fontSize: 10, color: '#E0E7FF' }}>저장 코스</Text></View><View style={styles.myStatBox}><Text style={{ fontSize: 18, fontWeight: '900', color: '#FFF' }}>{tripList.length}</Text><Text style={{ fontSize: 10, color: '#E0E7FF' }}>여행 횟수</Text></View></View>
+                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 20 }}><View style={styles.myStatBox}><Text style={{ fontSize: 18, fontWeight: '900', color: '#FFF' }}>{new Set(completedTripList.map((trip) => trip.stadium)).size}</Text><Text style={{ fontSize: 10, color: '#E0E7FF' }}>방문 경기장</Text></View><View style={styles.myStatBox}><Text style={{ fontSize: 18, fontWeight: '900', color: '#FFF' }}>{activeTrip ? 1 : 0}</Text><Text style={{ fontSize: 10, color: '#E0E7FF' }}>진행 중 코스</Text></View><View style={styles.myStatBox}><Text style={{ fontSize: 18, fontWeight: '900', color: '#FFF' }}>{completedTripList.length}</Text><Text style={{ fontSize: 10, color: '#E0E7FF' }}>완료 여행</Text></View></View>
                 </View>
                 <ScrollView style={styles.flex1} contentContainerStyle={{ padding: 20, gap: 10 }}>
                   {([{ id: 'account', label: '계정 관리', icon: '⚙️' }, { id: 'teams', label: '내 구단 설정', icon: '🏟️' }, { id: 'trips', label: '과거 여행 리스트', icon: '🗺️' }, { id: 'support', label: '고객 지원', icon: '💬' }] as const).map((item) => <TouchableOpacity key={item.id} style={styles.myMenuRow} onPress={() => { setMyPageSection(item.id); if (item.id === 'account') setAccountNicknameDraft(profile.nickname); }}><View style={styles.myMenuIcon}><Text style={{ fontSize: 18 }}>{item.icon}</Text></View><Text style={styles.myMenuLabel}>{item.label}</Text><ChevronRight size={18} color="#9CA3AF" /></TouchableOpacity>)}
@@ -1980,13 +2103,38 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
             ) : myPageSection === 'teams' ? (
               <View style={styles.flex1}><View style={styles.subPageHeader}><TouchableOpacity onPress={() => setMyPageSection('menu')}><ArrowLeft size={20} color="#6B7280" /></TouchableOpacity><Text style={styles.subPageTitle}>내 구단 설정</Text><View style={{ width: 20 }} /></View><ScrollView style={styles.flex1} contentContainerStyle={styles.subPageContent}><Text style={styles.subPageSectionTitle}>관심 구단 등록</Text><Text style={styles.subPageDescription}>경기 일정 별도 확인을 위해 관심 구단을 등록해주세요.{`\n`}종목당 최대 3개까지 등록할 수 있어요.</Text><View style={styles.subPageDivider} /><Text style={styles.subPageSectionTitle}>등록된 구단</Text>{favoriteTeams.length === 0 ? <View style={styles.emptyPreferenceCard}><Text style={{ fontSize: 22 }}>🏟️</Text><Text style={styles.emptyPreferenceTitle}>아직 등록된 구단이 없어요.</Text><Text style={styles.emptyPreferenceText}>관심 있는 구단을 등록해주세요.</Text></View> : favoriteTeams.map((team) => <View key={`${team.sport}-${team.teamName}`} style={styles.registeredTeamCard}><View style={{ flex: 1 }}><Text style={styles.registeredTeamName}>{team.teamName}</Text>{team.nickname ? <Text style={styles.registeredTeamNickname}>{team.nickname}</Text> : null}</View><TouchableOpacity style={styles.deleteTeamBtn} onPress={async () => { try { const saved = await replaceFavoriteTeams(favoriteTeams.filter((item) => !(item.sport === team.sport && item.teamName === team.teamName))); setFavoriteTeams(saved); } catch (error) { Alert.alert('삭제 실패', error instanceof Error ? error.message : '구단을 삭제하지 못했습니다.'); } }}><Text style={styles.deleteTeamText}>삭제</Text></TouchableOpacity></View>)}<TouchableOpacity style={styles.purpleBtn} onPress={() => { setFavoriteTeamDraftSport('baseball'); setFavoriteTeamDraftName(''); setFavoriteTeamDraftNickname(''); setFavoriteTeamModalOpen(true); }}><Text style={styles.purpleBtnText}>+ 관심 구단 등록하기</Text></TouchableOpacity></ScrollView></View>
             ) : myPageSection === 'trips' ? (
-              <View style={styles.flex1}><View style={styles.subPageHeader}><TouchableOpacity onPress={() => setMyPageSection('menu')}><ArrowLeft size={20} color="#6B7280" /></TouchableOpacity><Text style={styles.subPageTitle}>과거 여행 리스트</Text><View style={{ width: 20 }} /></View><ScrollView style={styles.flex1} contentContainerStyle={styles.subPageContent}><Text style={styles.subPageSectionTitle}>과거 여행 코스</Text><Text style={styles.subPageDescription}>여행 추천을 완료한 코스들입니다</Text>{tripList.length === 0 ? <View style={styles.emptyHistoryPanel}><Text style={styles.emptyHistoryText}>아직 코스 추천을 받지 않았어요!</Text></View> : tripList.map((trip) => <View key={trip.id} style={styles.historyCourseCard}><View style={styles.historyIcon}><Text style={{ fontSize: 20 }}>🏟️</Text></View><View style={{ flex: 1 }}><Text style={styles.historyCourseTitle}>{trip.courseTitle ?? '추천 여행 코스'}</Text><Text style={styles.historyCourseRoute}>{trip.stadium}</Text><View style={styles.historyMetaRow}><Text style={styles.historyMeta}>{trip.tripDate ?? new Date(trip.createdAt).toLocaleDateString()}</Text><Text style={styles.historyRating}>★ {trip.rating ?? '-'}</Text></View></View><ChevronRight size={18} color="#9CA3AF" /></View>)}</ScrollView></View>
+              <View style={styles.flex1}><View style={styles.subPageHeader}><TouchableOpacity onPress={() => setMyPageSection('menu')}><ArrowLeft size={20} color="#6B7280" /></TouchableOpacity><Text style={styles.subPageTitle}>과거 여행 리스트</Text><View style={{ width: 20 }} /></View><ScrollView style={styles.flex1} contentContainerStyle={styles.subPageContent}><Text style={styles.subPageSectionTitle}>과거 여행 코스</Text><Text style={styles.subPageDescription}>완주한 코스를 다시 보고, 원하지 않는 기록은 삭제할 수 있어요.</Text>{completedTripList.length === 0 ? <View style={styles.emptyHistoryPanel}><Text style={styles.emptyHistoryText}>아직 완료한 여행이 없어요!</Text></View> : completedTripList.map((trip) => <TouchableOpacity key={trip.id} style={styles.historyCourseCard} onPress={() => setSelectedHistoryTrip(trip)}><View style={styles.historyIcon}><Text style={{ fontSize: 20 }}>🏟️</Text></View><View style={{ flex: 1 }}><Text style={styles.historyCourseTitle}>{trip.courseTitle ?? '추천 여행 코스'}</Text><Text style={styles.historyCourseRoute}>{trip.stadium}{trip.matchName ? ` · ${trip.matchName}` : ''}</Text><View style={styles.historyMetaRow}><Text style={styles.historyMeta}>{trip.tripDate ?? new Date(trip.createdAt).toLocaleDateString()}</Text><Text style={styles.historyRating}>★ {trip.rating ?? '-'}</Text></View></View><ChevronRight size={18} color="#9CA3AF" /></TouchableOpacity>)}</ScrollView></View>
             ) : (
-              <View style={styles.flex1}><View style={styles.subPageHeader}><TouchableOpacity onPress={() => setMyPageSection('menu')}><ArrowLeft size={20} color="#6B7280" /></TouchableOpacity><Text style={styles.subPageTitle}>고객 지원</Text><View style={{ width: 20 }} /></View><ScrollView style={styles.flex1} contentContainerStyle={styles.subPageContent}><Text style={styles.subPageSectionTitle}>무엇을 도와드릴까요?</Text><View style={styles.supportCard}><Text style={{ fontSize: 24 }}>💬</Text><Text style={styles.supportTitle}>스포바이저 이용 안내</Text><Text style={styles.supportText}>경기 선택부터 여행 코스 생성까지 궁금한 점을 확인해보세요.</Text></View><View style={styles.supportCard}><Text style={{ fontSize: 24 }}>✉️</Text><Text style={styles.supportTitle}>문의하기</Text><Text style={styles.supportText}>서비스 이용 중 문제가 있으면 관리자에게 문의해주세요.</Text></View></ScrollView></View>
+              <View style={styles.flex1}><View style={styles.subPageHeader}><TouchableOpacity onPress={() => setMyPageSection('menu')}><ArrowLeft size={20} color="#6B7280" /></TouchableOpacity><Text style={styles.subPageTitle}>고객 지원</Text><View style={{ width: 20 }} /></View><ScrollView style={styles.flex1} contentContainerStyle={styles.subPageContent}><Text style={styles.subPageSectionTitle}>무엇을 도와드릴까요?</Text><TouchableOpacity style={styles.supportCard} onPress={() => setExpandedSupportItem(expandedSupportItem === 'guide' ? null : 'guide')}><View style={styles.supportCardHeader}><Text style={{ fontSize: 24 }}>💬</Text><View style={{ flex: 1 }}><Text style={styles.supportTitle}>스포바이저 이용 안내</Text><Text style={styles.supportText}>경기 선택부터 여행 코스 생성까지 한눈에 확인해보세요.</Text></View><ChevronDown size={18} color="#6B7280" /></View>{expandedSupportItem === 'guide' && <View style={styles.supportDetail}><Text style={styles.supportDetailTitle}>스포바이저는 이렇게 이용해요</Text><Text style={styles.supportDetailText}>1. 홈에서 경기 날짜와 응원하는 경기를 선택해요.\n2. 출발지, 이동수단, 동행자와 여행 컨셉을 정해요.\n3. 꼭 들르고 싶은 장소나 제외할 장소를 추가할 수 있어요.\n4. AI가 만든 3개 코스를 비교한 뒤 자세히 보고 마음에 드는 코스를 확정해요.\n5. 확정한 코스는 코스 탭에서 24시간 동안 확인할 수 있고, 완주하면 과거 여행 리스트에 기록돼요.</Text><View style={styles.supportTip}><Text style={styles.supportTipText}>TIP  ·  구단 설정에서 관심 구단을 등록하면 홈에서 해당 팀 경기만 모아볼 수 있어요.</Text></View></View>}</TouchableOpacity><TouchableOpacity style={styles.supportCard} onPress={() => setExpandedSupportItem(expandedSupportItem === 'contact' ? null : 'contact')}><View style={styles.supportCardHeader}><Text style={{ fontSize: 24 }}>✉️</Text><View style={{ flex: 1 }}><Text style={styles.supportTitle}>문의하기</Text><Text style={styles.supportText}>서비스 이용 중 문제가 있으면 편하게 알려주세요.</Text></View><ChevronDown size={18} color="#6B7280" /></View>{expandedSupportItem === 'contact' && <View style={styles.supportDetail}><Text style={styles.supportDetailTitle}>문의 접수 안내</Text><Text style={styles.supportDetailText}>오류 화면, 사용 중인 메뉴, 문제가 발생한 시간을 함께 알려주시면 더 빠르게 확인할 수 있어요.</Text><View style={styles.contactInfoBox}><Text style={styles.contactInfoLabel}>시연용 문의 채널</Text><Text style={styles.contactInfoValue}>support@spovisor.example</Text><Text style={styles.supportDetailText}>답변은 영업일 기준 1~2일 안에 드릴게요.</Text></View></View>}</TouchableOpacity></ScrollView></View>
             )}
           </>
         )}
       </View>
+
+      {tab === 'home' && flow === 'home' && homeNotice && (
+        <View pointerEvents="none" style={styles.homeNotice}>
+          <Check size={16} color="#FFFFFF" strokeWidth={3} />
+          <Text style={styles.homeNoticeText}>{homeNotice}</Text>
+        </View>
+      )}
+
+      <Modal visible={activeTripPromptOpen} transparent animationType="fade" onRequestClose={() => setActiveTripPromptOpen(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.activeTripPrompt}>
+            <View style={styles.activeTripPromptIcon}><Text style={{ fontSize: 24 }}>🗺️</Text></View>
+            <Text style={styles.activeTripPromptTitle}>진행 중인 여행이 있습니다</Text>
+            <Text style={styles.activeTripPromptText}>현재 진행중인 여행이 있습니다.{`\n`}진행중인 여행을 삭제하고 새로운 여행을 시작할까요?</Text>
+            <View style={styles.modalButtonRow}>
+              <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setActiveTripPromptOpen(false)} disabled={isSubmitting}>
+                <Text style={styles.modalCancelText}>아니요</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.modalSaveBtn} onPress={handleReplaceActiveTrip} disabled={isSubmitting}>
+                {isSubmitting ? <ActivityIndicator color="#FFF" /> : <Text style={styles.purpleBtnText}>예</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       <Modal visible={isNicknameModalOpen} transparent animationType="fade">
         <View style={styles.modalOverlay}>
@@ -2015,8 +2163,36 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
         </View>
       </Modal>
 
-      <Modal visible={favoriteTeamModalOpen} transparent animationType="slide" onRequestClose={() => setFavoriteTeamModalOpen(false)}>
-        <View style={styles.modalOverlay}><View style={styles.favoriteTeamModalContainer}><Text style={styles.modalTitle}>관심 구단 등록</Text><Text style={styles.accountFieldLabel}>종목</Text><View style={styles.sportSelectRow}>{TEAM_OPTIONS.map((item) => <TouchableOpacity key={item.sport} style={[styles.sportSelectBtn, favoriteTeamDraftSport === item.sport && styles.sportSelectBtnActive]} onPress={() => { setFavoriteTeamDraftSport(item.sport); setFavoriteTeamDraftName(''); setFavoriteTeamDropdownOpen(false); }}><Text style={[styles.sportSelectText, favoriteTeamDraftSport === item.sport && styles.sportSelectTextActive]}>{item.label}</Text></TouchableOpacity>)}</View><Text style={styles.accountFieldLabel}>구단</Text><TouchableOpacity style={styles.dropdownTrigger} onPress={() => setFavoriteTeamDropdownOpen((open) => !open)}><Text style={{ color: favoriteTeamDraftName ? '#111827' : '#9CA3AF', fontSize: 14 }}>{favoriteTeamDraftName || '구단을 선택해주세요'}</Text><ChevronDown size={18} color="#6B7280" /></TouchableOpacity>{favoriteTeamDropdownOpen && <View style={styles.dropdownMenu}>{(TEAM_OPTIONS.find((item) => item.sport === favoriteTeamDraftSport)?.teams ?? []).map((team) => <TouchableOpacity key={team} style={styles.dropdownItem} onPress={() => { setFavoriteTeamDraftName(team); setFavoriteTeamDropdownOpen(false); }}><Text style={{ color: team === favoriteTeamDraftName ? '#5B44E8' : '#374151', fontWeight: team === favoriteTeamDraftName ? '800' : '500' }}>{team}</Text></TouchableOpacity>)}</View>}<Text style={styles.accountFieldLabel}>별명</Text><TextInput value={favoriteTeamDraftNickname} onChangeText={setFavoriteTeamDraftNickname} style={styles.accountInput} placeholder="표시하고 싶은 별명을 입력해주세요" maxLength={100} /><View style={styles.modalButtonRow}><TouchableOpacity style={styles.modalCancelBtn} onPress={() => { setFavoriteTeamModalOpen(false); setFavoriteTeamDropdownOpen(false); }}><Text style={styles.modalCancelText}>취소</Text></TouchableOpacity><TouchableOpacity style={[styles.modalSaveBtn, (!favoriteTeamDraftName || favoriteTeamSaving) && { opacity: 0.55 }]} onPress={saveFavoriteTeamDraft} disabled={!favoriteTeamDraftName || favoriteTeamSaving}>{favoriteTeamSaving ? <ActivityIndicator color="#FFF" /> : <Text style={styles.purpleBtnText}>저장</Text>}</TouchableOpacity></View></View></View>
+      <Modal visible={favoriteTeamModalOpen} transparent animationType="none" onRequestClose={() => setFavoriteTeamModalOpen(false)}>
+        <View style={[styles.modalOverlay, styles.favoriteTeamModalOverlay]}>
+          <Animated.View pointerEvents="none" style={[styles.favoriteTeamBackdrop, { opacity: favoriteTeamBackdropOpacity }]} />
+          <TouchableOpacity style={styles.modalBackdropTouch} activeOpacity={1} onPress={() => { setFavoriteTeamModalOpen(false); setFavoriteTeamDropdownOpen(false); }} />
+          <Animated.View style={{ width: '100%', alignSelf: 'flex-end', transform: [{ translateY: favoriteTeamSheetY }] }}>
+            <View style={styles.favoriteTeamModalContainer}><Text style={styles.modalTitle}>관심 구단 등록</Text><Text style={styles.accountFieldLabel}>종목</Text><View style={styles.sportSelectRow}>{TEAM_OPTIONS.map((item) => <TouchableOpacity key={item.sport} style={[styles.sportSelectBtn, favoriteTeamDraftSport === item.sport && styles.sportSelectBtnActive]} onPress={() => { setFavoriteTeamDraftSport(item.sport); setFavoriteTeamDraftName(''); setFavoriteTeamDropdownOpen(false); }}><Text style={[styles.sportSelectText, favoriteTeamDraftSport === item.sport && styles.sportSelectTextActive]}>{item.label}</Text></TouchableOpacity>)}</View><Text style={styles.accountFieldLabel}>구단</Text><TouchableOpacity style={styles.dropdownTrigger} onPress={() => setFavoriteTeamDropdownOpen((open) => !open)}><Text style={{ color: favoriteTeamDraftName ? '#111827' : '#9CA3AF', fontSize: 14 }}>{favoriteTeamDraftName || '구단을 선택해주세요'}</Text><ChevronDown size={18} color="#6B7280" /></TouchableOpacity>{favoriteTeamDropdownOpen && <View style={styles.dropdownMenu}><ScrollView nestedScrollEnabled showsVerticalScrollIndicator contentContainerStyle={{ paddingVertical: 2 }}>{(TEAM_OPTIONS.find((item) => item.sport === favoriteTeamDraftSport)?.teams ?? []).map((team) => <TouchableOpacity key={team} style={styles.dropdownItem} onPress={() => { setFavoriteTeamDraftName(team); setFavoriteTeamDropdownOpen(false); }}><Text style={{ color: team === favoriteTeamDraftName ? '#5B44E8' : '#374151', fontWeight: team === favoriteTeamDraftName ? '800' : '500' }}>{team}</Text></TouchableOpacity>)}</ScrollView></View>}<Text style={styles.accountFieldLabel}>별명</Text><TextInput value={favoriteTeamDraftNickname} onChangeText={setFavoriteTeamDraftNickname} style={styles.accountInput} placeholder="표시하고 싶은 별명을 입력해주세요" maxLength={100} /><View style={styles.modalButtonRow}><TouchableOpacity style={styles.modalCancelBtn} onPress={() => { setFavoriteTeamModalOpen(false); setFavoriteTeamDropdownOpen(false); }}><Text style={styles.modalCancelText}>취소</Text></TouchableOpacity><TouchableOpacity style={[styles.modalSaveBtn, (!favoriteTeamDraftName || favoriteTeamSaving) && { opacity: 0.55 }]} onPress={saveFavoriteTeamDraft} disabled={!favoriteTeamDraftName || favoriteTeamSaving}>{favoriteTeamSaving ? <ActivityIndicator color="#FFF" /> : <Text style={styles.purpleBtnText}>저장</Text>}</TouchableOpacity></View></View>
+          </Animated.View>
+        </View>
+      </Modal>
+
+      <Modal visible={selectedHistoryTrip !== null} transparent animationType="fade" onRequestClose={() => setSelectedHistoryTrip(null)}>
+        <View style={styles.modalOverlay}><TouchableOpacity style={styles.modalBackdropTouch} activeOpacity={1} onPress={() => setSelectedHistoryTrip(null)} /><View style={styles.historyDetailModal}><Text style={styles.modalTitle}>{selectedHistoryTrip?.courseTitle ?? '완료한 여행 코스'}</Text><Text style={styles.historyCourseRoute}>{selectedHistoryTrip?.stadium}{selectedHistoryTrip?.matchName ? ` · ${selectedHistoryTrip.matchName}` : ''}</Text><Text style={styles.historyDetailDate}>{selectedHistoryTrip?.tripDate ?? (selectedHistoryTrip ? new Date(selectedHistoryTrip.createdAt).toLocaleDateString() : '')} · 평점 {selectedHistoryTrip?.rating ?? '-'}</Text>{selectedHistoryCourse && <><Text style={styles.historyDetailSectionTitle}>여행 요약</Text><Text style={styles.historyDetailSummary}>{selectedHistoryCourse.description || '내가 확정하고 완주한 여행 코스예요.'}</Text><Text style={styles.historyDetailSectionTitle}>방문 경로</Text><Text style={styles.historyDetailRoute}>{selectedHistoryCourse.routeText || selectedHistoryCourse.spots?.map((spot) => spot.name).join(' ➔ ')}</Text></>}<View style={styles.modalButtonRow}><TouchableOpacity style={styles.modalCancelBtn} onPress={() => setSelectedHistoryTrip(null)}><Text style={styles.modalCancelText}>닫기</Text></TouchableOpacity><TouchableOpacity style={styles.historyDeleteBtn} onPress={() => selectedHistoryTrip && handleDeleteTrip(selectedHistoryTrip)}><Text style={styles.historyDeleteText}>기록 삭제</Text></TouchableOpacity></View></View></View>
+      </Modal>
+
+      <Modal visible={deleteTripPrompt !== null} transparent animationType="fade" onRequestClose={() => !isSubmitting && setDeleteTripPrompt(null)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.activeTripPrompt}>
+            <View style={styles.activeTripPromptIcon}><Text style={{ fontSize: 24 }}>🗑️</Text></View>
+            <Text style={styles.activeTripPromptTitle}>기록을 삭제할까요?</Text>
+            <Text style={styles.activeTripPromptText}>삭제한 과거 여행 기록은 다시 복구할 수 없습니다.</Text>
+            <View style={styles.modalButtonRow}>
+              <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setDeleteTripPrompt(null)} disabled={isSubmitting}>
+                <Text style={styles.modalCancelText}>취소</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.historyDeleteBtn} onPress={handleConfirmDeleteTrip} disabled={isSubmitting}>
+                {isSubmitting ? <ActivityIndicator color="#EF4444" /> : <Text style={styles.historyDeleteText}>삭제</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
       </Modal>
 
       {/* "상황이 바뀌었나요?" 하단 팝업 모달 */}
@@ -2074,7 +2250,6 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
         {[
           { id: 'home', label: '홈', icon: Home },
           { id: 'course', label: '코스', icon: MapIcon },
-          { id: 'saved', label: '저장', icon: Bookmark },
           { id: 'my', label: 'MY', icon: User },
         ].map(({ id, label, icon: Icon }) => (
           <TouchableOpacity
@@ -2150,6 +2325,8 @@ const styles = StyleSheet.create({
   daysGrid: { flexDirection: 'row', flexWrap: 'wrap' },
   dayCell: { width: '14.28%', height: 40, alignItems: 'center', justifyContent: 'center' },
   dayCircle: { width: 30, height: 30, borderRadius: 15, justifyContent: 'center', alignItems: 'center' },
+  gameDayDots: { position: 'absolute', bottom: 1, flexDirection: 'row', alignItems: 'center', gap: 2 },
+  gameDayDot: { width: 4, height: 4, borderRadius: 2 },
   selectedDayCircle: { backgroundColor: '#5B44E8' },
   dayText: { fontSize: 13, fontWeight: 'bold', color: '#0F0E1A' },
   selectedDayText: { color: '#FFFFFF' },
@@ -2315,7 +2492,14 @@ const styles = StyleSheet.create({
   bigCheckCirclePurple: { width: 90, height: 90, borderRadius: 45, backgroundColor: '#5B44E8', justifyContent: 'center', alignItems: 'center' },
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  favoriteTeamModalOverlay: { backgroundColor: 'transparent', ...StyleSheet.absoluteFill, zIndex: 100, elevation: 100 },
+  favoriteTeamBackdrop: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(0,0,0,0.5)' },
+  modalBackdropTouch: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
   modalContainer: { backgroundColor: '#FFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20 },
+  activeTripPrompt: { backgroundColor: '#FFF', borderRadius: 24, padding: 22, margin: 20, alignItems: 'center', gap: 8 },
+  activeTripPromptIcon: { width: 56, height: 56, borderRadius: 28, backgroundColor: '#EEF2FF', justifyContent: 'center', alignItems: 'center', marginBottom: 4 },
+  activeTripPromptTitle: { color: '#111827', fontSize: 17, fontWeight: '900', textAlign: 'center' },
+  activeTripPromptText: { color: '#6B7280', fontSize: 13, lineHeight: 20, textAlign: 'center' },
   modalDragHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: '#E2E8F0', alignSelf: 'center', marginBottom: 16 },
   modalOptionCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', padding: 16, borderRadius: 16, borderWidth: 1, borderColor: '#F1F5F9', marginBottom: 10 },
   modalOptionCardActive: { borderColor: '#5B44E8', backgroundColor: '#EEF2FF' },
@@ -2355,7 +2539,7 @@ const styles = StyleSheet.create({
   accountAvatarPreview: { alignItems: 'center', paddingVertical: 8, marginBottom: 8 },
   accountAvatarCircle: { width: 100, height: 100, borderRadius: 50, justifyContent: 'center', alignItems: 'center', borderWidth: 4, borderColor: '#FFF' },
   accountFieldLabel: { fontSize: 13, fontWeight: '800', color: '#4B5563', marginTop: 8, marginBottom: 6 },
-  accountInput: { height: 52, borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10, paddingHorizontal: 14, color: '#111827', backgroundColor: '#FFF', fontSize: 14 },
+  accountInput: { height: 52, flexShrink: 0, borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10, paddingHorizontal: 14, color: '#111827', backgroundColor: '#FFF', fontSize: 14 },
   accountInputDisabled: { color: '#4B5563', backgroundColor: '#F9FAFB' },
   subPageSectionTitle: { fontSize: 17, fontWeight: '900', color: '#374151', marginTop: 6 },
   subPageDescription: { color: '#9CA3AF', fontSize: 12, lineHeight: 18 },
@@ -2368,7 +2552,7 @@ const styles = StyleSheet.create({
   registeredTeamNickname: { fontSize: 11, color: '#9CA3AF', marginTop: 4 },
   deleteTeamBtn: { paddingHorizontal: 11, paddingVertical: 7, borderRadius: 6, backgroundColor: '#E5E7EB' },
   deleteTeamText: { color: '#6B7280', fontSize: 11, fontWeight: '700' },
-  favoriteTeamModalContainer: { backgroundColor: '#FFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, maxHeight: '85%' },
+  favoriteTeamModalContainer: { width: '100%', flexShrink: 0, backgroundColor: '#FFF', borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingTop: 20, paddingHorizontal: 20, paddingBottom: 90, marginBottom: -60, zIndex: 2, elevation: 8 },
   modalTitle: { fontSize: 19, fontWeight: '900', color: '#374151', marginBottom: 8 },
   sportSelectRow: { flexDirection: 'row', gap: 8, marginBottom: 4 },
   sportSelectBtn: { flex: 1, height: 42, borderRadius: 10, borderWidth: 1, borderColor: '#E5E7EB', alignItems: 'center', justifyContent: 'center' },
@@ -2376,9 +2560,9 @@ const styles = StyleSheet.create({
   sportSelectText: { color: '#9CA3AF', fontSize: 13, fontWeight: '700' },
   sportSelectTextActive: { color: '#5B44E8' },
   dropdownTrigger: { height: 52, borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  dropdownMenu: { borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10, marginTop: 6, backgroundColor: '#FFF', maxHeight: 170, overflow: 'hidden' },
+  dropdownMenu: { borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10, marginTop: 6, backgroundColor: '#FFF', maxHeight: 220, overflow: 'hidden', zIndex: 5, elevation: 5 },
   dropdownItem: { paddingHorizontal: 14, paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' },
-  modalButtonRow: { flexDirection: 'row', gap: 10, marginTop: 18 },
+  modalButtonRow: { flexDirection: 'row', gap: 10, marginTop: 18, flexShrink: 0 },
   modalCancelBtn: { flex: 1, height: 50, borderRadius: 24, backgroundColor: '#F1F5F9', justifyContent: 'center', alignItems: 'center' },
   modalCancelText: { color: '#6B7280', fontSize: 14, fontWeight: '800' },
   modalSaveBtn: { flex: 1, height: 50, borderRadius: 24, backgroundColor: '#5B44E8', justifyContent: 'center', alignItems: 'center' },
@@ -2392,8 +2576,17 @@ const styles = StyleSheet.create({
   historyMeta: { color: '#9CA3AF', fontSize: 10 },
   historyRating: { color: '#D97706', fontSize: 11, fontWeight: '800' },
   supportCard: { padding: 18, borderRadius: 14, backgroundColor: '#FFF', borderWidth: 1, borderColor: '#F1F5F9', gap: 8 },
+  supportCardHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   supportTitle: { fontSize: 14, fontWeight: '900', color: '#374151' },
   supportText: { fontSize: 12, color: '#6B7280', lineHeight: 18 },
+  supportDetail: { marginTop: 14, paddingTop: 14, borderTopWidth: 1, borderTopColor: '#EEF2F7', gap: 8 },
+  supportDetailTitle: { fontSize: 13, fontWeight: '900', color: '#374151' },
+  supportDetailText: { fontSize: 12, color: '#4B5563', lineHeight: 20 },
+  supportTip: { padding: 10, borderRadius: 10, backgroundColor: '#EEF2FF' },
+  supportTipText: { fontSize: 11, color: '#5B44E8', lineHeight: 17, fontWeight: '700' },
+  contactInfoBox: { padding: 12, borderRadius: 10, backgroundColor: '#F8FAFC', gap: 4 },
+  contactInfoLabel: { fontSize: 10, color: '#9CA3AF', fontWeight: '800' },
+  contactInfoValue: { fontSize: 13, color: '#5B44E8', fontWeight: '900' },
 
   tripCardRow: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#FFF', padding: 16, borderRadius: 16, borderWidth: 1, borderColor: '#F1F5F9' },
   favoriteTeamsSection: { padding: 14, borderRadius: 16, backgroundColor: '#FFF', borderWidth: 1, borderColor: '#E2E8F0', marginTop: 4 },
@@ -2404,6 +2597,23 @@ const styles = StyleSheet.create({
   teamChipText: { fontSize: 11, color: '#6B7280', fontWeight: '700' },
   teamChipTextActive: { color: '#5B44E8' },
   tripIconCircle: { width: 40, height: 40, borderRadius: 12, backgroundColor: '#F8FAFC', justifyContent: 'center', alignItems: 'center' },
+  emptyCoursePanel: { minHeight: 360, justifyContent: 'center', alignItems: 'center', backgroundColor: '#FFF', borderRadius: 20, padding: 24, gap: 10 },
+  emptyCourseTitle: { color: '#374151', fontSize: 16, fontWeight: '900', textAlign: 'center' },
+  emptyCourseText: { color: '#9CA3AF', fontSize: 12, lineHeight: 18, textAlign: 'center' },
+  activeCourseBanner: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#2E2A72', borderRadius: 18, padding: 18 },
+  activeCourseEyebrow: { color: '#C7D2FE', fontSize: 11, fontWeight: '800', marginBottom: 5 },
+  activeCourseTitle: { color: '#FFF', fontSize: 20, fontWeight: '900' },
+  activeCourseMeta: { color: '#E0E7FF', fontSize: 11, marginTop: 7 },
+  activeCourseCard: { backgroundColor: '#FFF', borderRadius: 18, padding: 18, gap: 10 },
+  activeCourseRoute: { color: '#5B44E8', fontSize: 13, fontWeight: '800', lineHeight: 20 },
+  activeCourseDescription: { color: '#6B7280', fontSize: 12, lineHeight: 18, marginBottom: 6 },
+  historyDetailModal: { backgroundColor: '#FFF', borderRadius: 24, padding: 22, margin: 20, zIndex: 2, elevation: 8, gap: 8 },
+  historyDetailDate: { color: '#9CA3AF', fontSize: 11 },
+  historyDetailSectionTitle: { color: '#374151', fontSize: 12, fontWeight: '900', marginTop: 10 },
+  historyDetailSummary: { color: '#4B5563', fontSize: 12, lineHeight: 19 },
+  historyDetailRoute: { color: '#5B44E8', fontSize: 12, fontWeight: '700', lineHeight: 19 },
+  historyDeleteBtn: { flex: 1, height: 50, borderRadius: 24, backgroundColor: '#FEF2F2', justifyContent: 'center', alignItems: 'center' },
+  historyDeleteText: { color: '#EF4444', fontSize: 14, fontWeight: '800' },
   tagBluePill: { backgroundColor: '#EEF2FF', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
 
   accountOutlineBtn: { height: 52, borderRadius: 16, borderWidth: 1.5, borderColor: '#5B44E8', backgroundColor: '#EEF2FF', justifyContent: 'center', alignItems: 'center' },
@@ -2426,6 +2636,8 @@ const styles = StyleSheet.create({
   purpleBtn: { height: 48, borderRadius: 24, backgroundColor: '#5B44E8', justifyContent: 'center', alignItems: 'center' },
   disabledPurpleBtn: { backgroundColor: '#C9C9C9' },
   purpleBtnText: { color: '#FFF', fontSize: 15, fontWeight: '900' },
+  homeNotice: { position: 'absolute', top: 16, left: 20, right: 20, zIndex: 20, minHeight: 48, paddingHorizontal: 16, paddingVertical: 12, borderRadius: 16, backgroundColor: '#2E2A72', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, shadowColor: '#111827', shadowOpacity: 0.22, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 8 },
+  homeNoticeText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800', textAlign: 'center' },
 
   bottomTabBar: { flexDirection: 'row', height: 60, backgroundColor: '#FFFFFF', borderTopWidth: 1, borderTopColor: '#F1F5F9' },
   tabItem: { flex: 1, justifyContent: 'center', alignItems: 'center' },
@@ -2514,6 +2726,11 @@ const styles = StyleSheet.create({
   timelineItemDesc: { fontSize: 13, color: '#6B7280', marginTop: 4 },
 
   mockImageRect: { width: 100, height: 100, borderRadius: 12, backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#E2E8F0' },
+  mockImageRectSmall: { width: 88, height: 64, borderRadius: 10, backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#E2E8F0' },
+  spotGalleryImage: { width: 122, height: 88, borderRadius: 10, backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#E2E8F0' },
+  imageLoadingBox: { height: 52, marginTop: 12, borderRadius: 10, backgroundColor: '#F8FAFC', alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8 },
+  imageLoadingText: { color: '#9CA3AF', fontSize: 11 },
+  spotImageEmptyText: { color: '#9CA3AF', fontSize: 11, marginTop: 12 },
 
   moveInfoBox: { marginTop: 12, padding: 12, backgroundColor: '#F8FAFC', borderRadius: 10, borderWidth: 1, borderColor: '#F1F5F9' },
   moveInfoText: { fontSize: 12, color: '#6B7280', fontWeight: '600' },
@@ -2523,10 +2740,14 @@ const styles = StyleSheet.create({
   // --- 지도 상세(courseDetail) 전용 스타일 ---
   detailTopHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12, backgroundColor: '#FFF', zIndex: 10 },
   detailMapArea: { height: 260, backgroundColor: '#E2E8F0', position: 'relative' },
+  mapRouteOverlay: { ...StyleSheet.absoluteFill, zIndex: 2 },
+  mapRouteMarker: { position: 'absolute', width: 28, height: 28, marginLeft: -14, marginTop: -14, borderRadius: 14, backgroundColor: '#FDE047', borderWidth: 2, borderColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center', shadowColor: '#111827', shadowOpacity: 0.3, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 4 },
+  mapRouteMarkerText: { color: '#374151', fontSize: 12, fontWeight: '900' },
   simulatedPathNew: { position: 'absolute', top: 60, left: 60, right: 60, bottom: 60, borderWidth: 2, borderColor: '#9CA3AF', borderStyle: 'dashed', borderRadius: 20 },
   mapPinYellowNew: { position: 'absolute', width: 28, height: 28, borderRadius: 14, backgroundColor: '#FDE047', justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#FFF', shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 3, elevation: 3 },
   
   detailTimelineSheet: { flex: 1, backgroundColor: '#FFF', borderTopLeftRadius: 30, borderTopRightRadius: 30, marginTop: -30, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 10, elevation: 5, paddingTop: 12 },
+  activeCourseTimelineSheet: { marginTop: -4 },
   bottomSheetTitleCenter: { fontSize: 18, fontWeight: '900', color: '#111827', textAlign: 'center', marginBottom: 10 },
   
   timelineOrangePin: { width: 26, height: 26, borderRadius: 13, backgroundColor: '#10B981', justifyContent: 'center', alignItems: 'center', zIndex: 1 },

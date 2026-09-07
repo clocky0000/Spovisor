@@ -35,6 +35,9 @@ export type Trip = {
   courseTitle?: string;
   rating?: number;
   visitedSpotIds: number[];
+  course?: unknown;
+  status?: 'ACTIVE' | 'COMPLETED' | 'EXPIRED';
+  expiresAt?: string;
   createdAt: string;
 };
 
@@ -49,6 +52,12 @@ export type SpotSearchResult = {
   address?: string;
   roadAddress?: string;
   providerId?: string;
+};
+
+export type SpotImageSearchResult = {
+  imageUrl: string;
+  thumbnailUrl: string;
+  sourceUrl?: string;
 };
 
 export type FavoriteTeam = { id?: number; sport: string; teamName: string; nickname?: string | null };
@@ -139,11 +148,15 @@ export function listSavedCourses() { return request<SavedCourse[]>('/courses/sav
 export function saveCourse(body: { title: string; stadium?: string; courseType?: string; course: unknown }) { return request<SavedCourse>('/courses/saved', { method: 'POST', body }); }
 export function deleteSavedCourse(id: number) { return request<void>(`/courses/saved/${id}`, { method: 'DELETE' }); }
 export function listTrips() { return request<Trip[]>('/trips'); }
-export function createTrip(body: { stadium: string; matchName?: string; tripDate?: string; courseTitle?: string }) { return request<Trip>('/trips', { method: 'POST', body }); }
+export function createTrip(body: { stadium: string; matchName?: string; tripDate?: string; courseTitle?: string; course?: unknown }) { return request<Trip>('/trips', { method: 'POST', body }); }
 export function submitTripFeedback(id: number, rating: number, visitedSpotIds: number[]) { return request<Trip>(`/trips/${id}/feedback`, { method: 'PATCH', body: { rating, visitedSpotIds } }); }
+export function deleteTrip(id: number) { return request<void>(`/trips/${id}`, { method: 'DELETE' }); }
 export function createRecommendationRequest(survey: unknown) { return request<{ requestId: number; status: string }>('/recommendations/requests', { method: 'POST', body: { survey } }); }
 export function searchSpots(query: string) {
   return request<SpotSearchResult[]>(`/spots/search?q=${encodeURIComponent(query.trim())}`);
+}
+export function searchSpotImages(query: string) {
+  return request<SpotImageSearchResult[]>(`/spots/images?q=${encodeURIComponent(query.trim())}`);
 }
 export function getRecommendationRequestStatus(requestId: number) {
   return request<{ requestId: number; status: string; resultJson?: string; createdAt: string }>(`/recommendations/requests/${requestId}`);
