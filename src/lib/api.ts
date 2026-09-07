@@ -145,3 +145,6 @@ export function createRecommendationRequest(survey: unknown) { return request<{ 
 export function searchSpots(query: string) {
   return request<SpotSearchResult[]>(`/spots/search?q=${encodeURIComponent(query.trim())}`);
 }
+export function getRecommendationRequestStatus(requestId: number) {
+  return request<{ requestId: number; status: string; resultJson?: string; createdAt: string }>(`/recommendations/requests/${requestId}`);
+}

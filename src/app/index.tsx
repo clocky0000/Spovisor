@@ -6,9 +6,9 @@ import {
   Calendar as CalendarIcon,
   Camera,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
-  ChevronDown,
   Clock,
   Coffee,
   Filter,
@@ -17,7 +17,6 @@ import {
   Map as MapIcon,
   Navigation,
   Pencil,
-  RotateCcw,
   Share2,
   ShoppingBag,
   Star,
@@ -34,7 +33,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  View,
+  View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -48,6 +47,7 @@ import {
   deleteMyAccount,
   deleteSavedCourse,
   getMyProfile,
+  getRecommendationRequestStatus,
   listFavoritePlaces,
   listFavoriteTeams,
   listSavedCourses,
@@ -124,6 +124,8 @@ interface CourseSpot {
   description: string;
   emoji: string;
   visited?: boolean;
+  map_x?: string | null;
+  map_y?: string | null;
 }
 
 interface Course {
@@ -504,7 +506,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
   const [maxTime, setMaxTime] = useState<string>('1시간');
   const [walkDist, setWalkDist] = useState<string>('20분 이내');
 
-  const [companion, setCompanion] = useState<string>('혼로여행');
+  const [companion, setCompanion] = useState<string>('홀로여행');
   const [extraCompanion, setExtraCompanion] = useState<string[]>([]);
 
   const [concept, setConcept] = useState<string | null>('미식 탐방형');
@@ -820,12 +822,106 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
     try {
       const survey = buildSurvey();
       await saveUserSurvey(survey);
-      await createRecommendationRequest(survey);
-      setCourses([]);
+
+      const res = await createRecommendationRequest(survey);
+      const requestId = res.requestId;
+
       setFlow('courseList');
+
+      const pollInterval = setInterval(async () => {
+        try {
+          const statusRes = await getRecommendationRequestStatus(requestId);
+          const currentStatus = statusRes.status?.toUpperCase();
+
+          if (currentStatus === 'COMPLETED' && statusRes.resultJson) {
+            clearInterval(pollInterval);
+
+            try {
+              const aiResult = JSON.parse(statusRes.resultJson);
+              
+              let rawCourses = [];
+              if (Array.isArray(aiResult)) rawCourses = aiResult;
+              else if (aiResult.courses && Array.isArray(aiResult.courses)) rawCourses = aiResult.courses;
+              else if (aiResult.data && Array.isArray(aiResult.data)) rawCourses = aiResult.data;
+              else if (aiResult.data && Array.isArray(aiResult.data.courses)) rawCourses = aiResult.data.courses;
+
+              if (rawCourses.length > 0) {
+                // 💡 [핵심] AI 데이터를 프론트엔드 UI 화면에 맞게 변환(Mapping)합니다.
+                const mappedCourses: Course[] = rawCourses.map((c, index) => {
+                  const code = String.fromCharCode(65 + index); // 0 -> A, 1 -> B, 2 -> C
+                  
+                  // 카테고리별 이모지 자동 매핑 함수
+                  const getEmoji = (text: string) => {
+                    if (!text) return '📍';
+                    if (text.includes('맛집') || text.includes('음식')) return '🍜';
+                    if (text.includes('문화') || text.includes('관광')) return '🗺️';
+                    if (text.includes('쇼핑')) return '🛍️';
+                    if (text.includes('자연')) return '🌿';
+                    if (text.includes('카페')) return '☕';
+                    return '📍';
+                  };
+
+                  // 1. 태그 변환
+                  const mappedTags = (c.tags || []).map((t: string) => ({
+                    emoji: getEmoji(t),
+                    label: t
+                  }));
+
+                  // 2. 동선 텍스트 만들기 (A ➔ B ➔ C)
+                  const routeStr = (c.spots || []).map((s: any) => s.name).join(' ➔ ');
+
+                  // 3. 세부 장소 변환
+                  const mappedSpots: CourseSpot[] = (c.spots || []).map((s: any, sIdx: number, sArr: any[]) => ({
+                    id: Number(`${c.course_id}${sIdx}`),
+                    name: s.name,
+                    category: s.category || '장소',
+                    time: '', // AI 응답에 시간이 없으므로 비워둡니다
+                    emoji: getEmoji(s.category),
+                    description: s.category || '추천 장소',
+                    visited: false,
+                    map_x: s.map_x,
+                    map_y: s.map_y,
+                  }));
+
+                  return {
+                    id: c.course_id || index,
+                    code: code,
+                    title: `${code}코스`, // 제목이 없으므로 A코스, B코스로 지정
+                    conceptTag: mappedTags[0]?.label || '추천 코스',
+                    duration: c.stats && c.stats['총 장소'] ? `총 ${c.stats['총 장소']}곳` : '',
+                    moveTime: '',
+                    distance: c.stats && c.stats['거리(km)'] ? `${c.stats['거리(km)']}km` : '',
+                    routeText: routeStr,
+                    tags: mappedTags,
+                    description: c.summary || '',
+                    spots: mappedSpots,
+                    saved: false
+                  };
+                });
+
+                setCourses(mappedCourses);
+              } else {
+                Alert.alert('오류', '코스 목록이 비어있습니다.');
+                setCourses([]);
+              }
+            } catch (parseError) {
+              console.error("❌ JSON 파싱 에러:", parseError);
+              Alert.alert('오류', 'AI 서버 응답을 해석할 수 없습니다.');
+            }
+            setIsSubmitting(false);
+
+          } else if (currentStatus === 'FAILED') {
+            clearInterval(pollInterval);
+            Alert.alert('추천 실패', '코스 생성 중 오류가 발생했습니다');
+            setIsSubmitting(false);
+          }
+        } catch (pollError) {
+          console.error("❌ [폴링 에러]:", pollError);
+        }
+      }, 2000);
     } catch (error) {
+      console.error("❌ [요청 시작 에러]:", error);
       Alert.alert('설문 저장 실패', error instanceof Error ? error.message : '설문을 저장하지 못했습니다.');
-    } finally {
       setIsSubmitting(false);
     }
   };
@@ -1219,7 +1315,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                 <ScrollView style={styles.flex1} contentContainerStyle={{ padding: 20, gap: 12 }}>
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
                     {[
-                      { id: '혼로여행', emoji: '🧍' },
+                      { id: '홀로여행', emoji: '🧍' },
                       { id: '친구와 여행', emoji: '👫' },
                       { id: '연인과의 여행', emoji: '💑' },
                       { id: '가족여행', emoji: '👨‍👩‍👧' },
@@ -1444,37 +1540,37 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
               </View>
             )}
 
-            {/* AI 추천 코스 결과 목록 */}
+            {/* ========================================== */}
+            {/* 3단계: AI 추천 코스 목록 (디자인 1, 2번 카드형) */}
+            {/* ========================================== */}
             {flow === 'courseList' && (
-              <View style={styles.flex1}>
+              <View style={[styles.flex1, { backgroundColor: '#F8FAFC' }]}>
                 <View style={styles.header}>
-                  <TouchableOpacity onPress={() => setFlow('home')} style={styles.backBtn}><ArrowLeft size={18} color="#0F0E1A" /><Text style={styles.backText}>뒤로</Text></TouchableOpacity>
-                  <View style={styles.aiTag}><Text style={{ color: '#5B44E8', fontSize: 11, fontWeight: 'bold' }}>✨ AI 추천 완료</Text></View>
+                  <TouchableOpacity onPress={() => setFlow('home')} style={styles.backBtn}>
+                    <ArrowLeft size={18} color="#0F0E1A" />
+                    <Text style={styles.backText}>뒤로</Text>
+                  </TouchableOpacity>
+                  <View style={styles.aiTag}>
+                    <Text style={{ color: '#5B44E8', fontSize: 11, fontWeight: 'bold' }}>✨ AI 추천 완료</Text>
+                  </View>
                   <Text style={styles.headerSub}>추천 코스가 완성됐어요!</Text>
-                  <Text style={styles.headerDesc}>조건에 맞는 3개의 코스 중 선택해보세요.</Text>
+                  <Text style={styles.headerDesc}>조건에 맞는 {courses.length}개의 코스 중 선택해보세요.</Text>
 
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, marginTop: 12 }}>
                     <View style={styles.condPill}><Text style={{ fontSize: 11, color: '#374151' }}>🏟️ {selectedGame ? `${selectedGame.home} vs ${selectedGame.away}` : '경기'}</Text></View>
-                    <View style={styles.condPill}><Text style={{ fontSize: 11, color: '#374151' }}>📍 {origin || '출발지 미설정'}</Text></View>
                     <View style={styles.condPill}><Text style={{ fontSize: 11, color: '#374151' }}>{useCustomRatio ? '🎛️ 직접 비율' : `${CONCEPT_PREVIEWS[previewConcept].emoji} ${previewConcept}`}</Text></View>
                     <View style={styles.condPill}><Text style={{ fontSize: 11, color: '#374151' }}>👤 {companion}</Text></View>
                   </ScrollView>
                 </View>
 
                 <ScrollView style={styles.flex1} contentContainerStyle={{ padding: 20, gap: 16 }}>
-                  {courses.length === 0 && (
-                    <View style={styles.aiEmptyCard}>
-                      <Text style={{ fontSize: 34 }}>✨</Text>
-                      <Text style={{ fontSize: 17, fontWeight: '900', color: '#312E81', marginTop: 12 }}>AI 추천 코스를 준비 중이에요</Text>
-                      <Text style={{ fontSize: 12, color: '#6B7280', textAlign: 'center', lineHeight: 19, marginTop: 8 }}>설문은 저장되었습니다. AI 모델 서버가 연결되면 이 화면에서 추천 코스 3개를 받아볼 수 있어요.</Text>
-                      <TouchableOpacity style={[styles.purpleBtn, { width: '100%', marginTop: 18 }]} onPress={() => setFlow('home')}><Text style={styles.purpleBtnText}>홈으로 돌아가기</Text></TouchableOpacity>
-                    </View>
-                  )}
-                  {courses.map((course) => {
-                    const isExpanded = expandedCourseId === course.id;
+                  {courses.map((course, index) => {
+                    const safeId = course.id ?? index;
+                    const isExpanded = expandedCourseId === safeId;
                     const isA = course.code === 'A';
+                    
                     return (
-                      <View key={course.id} style={[styles.recCardBox, isA && styles.recCardBoxActive]}>
+                      <View key={`course-${safeId}`} style={[styles.recCardBox, isA && styles.recCardBoxActive]}>
                         <View style={styles.rowBetween}>
                           <View style={styles.rowCenter}>
                             <View style={[styles.badgeLetter, { backgroundColor: isA ? '#D97706' : '#5B44E8' }]}>
@@ -1485,37 +1581,37 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                               <Text style={{ color: isA ? '#D97706' : '#5B44E8', fontSize: 10, fontWeight: 'bold' }}>{course.conceptTag}</Text>
                             </View>
                           </View>
-                          {isA && (
-                            <View style={styles.checkedCircleOrange}>
-                              <Check size={12} color="#FFF" strokeWidth={3} />
-                            </View>
-                          )}
                         </View>
 
-                        <Text style={{ fontSize: 13, fontWeight: '600', color: '#374151', marginVertical: 10 }}>{course.routeText}</Text>
+                        {/* AI가 제공한 Summary 노출 */}
+                        <Text style={{ fontSize: 13, fontWeight: '600', color: '#374151', marginVertical: 10, lineHeight: 20 }}>
+                          {course.description}
+                        </Text>
 
+                        {/* AI가 제공한 Stats 노출 */}
                         <View style={{ flexDirection: 'row', gap: 12, alignItems: 'center', marginBottom: 10 }}>
-                          <Text style={{ fontSize: 12, fontWeight: 'bold' }}>⏱️ {course.duration}</Text>
-                          <Text style={{ fontSize: 12, color: '#6B7280' }}>🚆 이동 {course.moveTime}</Text>
-                          <Text style={{ fontSize: 12, color: '#6B7280' }}>📍 {course.distance}</Text>
+                          <Text style={{ fontSize: 12, fontWeight: 'bold', color: '#111827' }}>📍 {course.duration}</Text>
+                          <Text style={{ fontSize: 12, color: '#6B7280' }}>🚶 총 거리 {course.distance}</Text>
                         </View>
 
-                        <View style={{ flexDirection: 'row', gap: 6, marginBottom: 14 }}>
-                          {course.tags.map((t, idx) => (
-                            <View key={idx} style={styles.tagPillGrey}>
+                        <View style={{ flexDirection: 'row', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
+                          {course.tags?.map((t, idx) => (
+                            <View key={`tag-${safeId}-${idx}`} style={styles.tagPillGrey}>
                               <Text style={{ fontSize: 11 }}>{t.emoji} {t.label}</Text>
                             </View>
                           ))}
                         </View>
 
+                        {/* 미리보기(접기)를 눌렀을 때만 전체 동선 표시 */}
                         {isExpanded && (
                           <View style={styles.expandDescBox}>
-                            <Text style={{ fontSize: 12, color: '#D97706', lineHeight: 18 }}>{course.description}</Text>
+                            <Text style={{ fontSize: 12, color: '#D97706', fontWeight: 'bold' }}>전체 동선 안내</Text>
+                            <Text style={{ fontSize: 12, color: '#D97706', marginTop: 4, lineHeight: 18 }}>{course.routeText}</Text>
                           </View>
                         )}
 
                         <View style={{ flexDirection: 'row', gap: 8 }}>
-                          <TouchableOpacity style={styles.previewBtn} onPress={() => setExpandedCourseId(isExpanded ? null : course.id)}>
+                          <TouchableOpacity style={styles.previewBtn} onPress={() => setExpandedCourseId(isExpanded ? null : safeId)}>
                             <Text style={{ fontSize: 13, fontWeight: 'bold', color: '#4B5563' }}>{isExpanded ? '접기' : '미리보기'}</Text>
                           </TouchableOpacity>
                           <TouchableOpacity
@@ -1532,117 +1628,90 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
               </View>
             )}
 
-            {/* 코스 상세 타임라인 */}
+            {/* ========================================== */}
+            {/* 4단계: 코스 상세 (디자인 4번 지도+바텀시트) */}
+            {/* ========================================== */}
             {flow === 'courseDetail' && (
-              <View style={styles.flex1}>
-                <View style={styles.purpleHeader}>
-                  <TouchableOpacity onPress={() => setFlow('courseList')} style={styles.backBtn}><ArrowLeft size={18} color="#FFF" /><Text style={{ color: '#FFF', fontSize: 13 }}>뒤로</Text></TouchableOpacity>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 4 }}>
-                    <View style={styles.badgeLetterYellow}><Text style={{ color: '#FFF', fontWeight: 'bold' }}>A</Text></View>
-                    <View>
-                      <Text style={{ fontSize: 18, fontWeight: '900', color: '#FFF' }}>{selectedCourse.title} · {selectedCourse.conceptTag}</Text>
-                      <Text style={{ fontSize: 11, color: '#E0E7FF', marginTop: 2 }}>{selectedCourse.description}</Text>
-                    </View>
-                  </View>
-
-                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 16 }}>
-                    <View style={styles.statBoxCard}><Text style={{ fontSize: 16 }}>⏱️</Text><Text style={styles.statBoxMain}>3시간 10분</Text><Text style={styles.statBoxSub}>총 시간</Text></View>
-                    <View style={styles.statBoxCard}><Text style={{ fontSize: 16 }}>🏃</Text><Text style={styles.statBoxMain}>35분</Text><Text style={styles.statBoxSub}>이동 시간</Text></View>
-                    <View style={styles.statBoxCard}><Text style={{ fontSize: 16 }}>📍</Text><Text style={styles.statBoxMain}>4곳</Text><Text style={styles.statBoxSub}>방문 장소</Text></View>
+              <View style={[styles.flex1, { backgroundColor: '#F8FAFC' }]}>
+                {/* 상단 헤더 */}
+                <View style={styles.detailTopHeader}>
+                  <TouchableOpacity onPress={() => setFlow('courseList')} style={{ padding: 8 }}>
+                    <ArrowLeft size={24} color="#111827" />
+                  </TouchableOpacity>
+                  <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#111827' }}>여행 지도</Text>
+                  <View style={styles.greenNavTag}>
+                    <View style={styles.greenDot} />
+                    <Text style={{ fontSize: 10, color: '#059669', fontWeight: 'bold' }}>경로 안내 중</Text>
                   </View>
                 </View>
 
-                <ScrollView style={styles.flex1} contentContainerStyle={{ padding: 20, gap: 16 }}>
-                  <Text style={styles.sectionTitle}>타임라인</Text>
+                {/* 지도 시각화 영역 (웹 테스트용 구글 지도 임베드) */}
+                <View style={styles.detailMapArea}>
+                  <iframe
+                    title="web-map"
+                    src={`https://maps.google.com/maps?q=${Number(selectedCourse.spots[0]?.map_y) || 37.5121513},${Number(selectedCourse.spots[0]?.map_x) || 127.0719095}&z=14&output=embed`}
+                    style={{ width: '100%', height: '100%', border: 0 }}
+                  />
+                </View>
 
-                  {selectedCourse.spots.map((spot, idx) => (
-                    <View key={spot.id} style={styles.timelineRow}>
-                      <View style={styles.timelineLeftNode}>
-                        <View style={styles.timelineEmojiCircle}><Text style={{ fontSize: 18 }}>{spot.emoji}</Text></View>
-                        {idx < selectedCourse.spots.length - 1 && <View style={styles.timelineLine} />}
-                      </View>
-                      <View style={{ flex: 1, paddingBottom: 16 }}>
-                        <View style={styles.rowCenter}>
-                          <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#5B44E8' }}>{spot.time}</Text>
-                          <Text style={{ fontSize: 15, fontWeight: '900', color: '#0F0E1A', marginLeft: 6 }}>{spot.name}</Text>
-                          <ChevronRight size={14} color="#9CA3AF" style={{ marginLeft: 'auto' }} />
+                {/* 하단 타임라인 바텀시트 */}
+                <View style={styles.detailTimelineSheet}>
+                  <View style={styles.modalDragHandle} />
+                  <Text style={styles.bottomSheetTitleCenter}>날짜별 동선을 지도에서 확인</Text>
+
+                  <ScrollView style={styles.flex1} contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
+                    {selectedCourse.spots.map((spot, idx, arr) => (
+                      <View key={`timeline-${idx}`} style={styles.timelineItemRow}>
+                        
+                        <View style={styles.timelineLeftCol}>
+                          <View style={styles.timelineOrangePin}>
+                            <Text style={styles.timelinePinTextWhite}>{idx + 1}</Text>
+                          </View>
+                          {idx < arr.length - 1 && <View style={styles.timelineVerticalLineSolid} />}
                         </View>
-                        {spot.stayTime && <View style={styles.stayTagPill}><Text style={{ fontSize: 10, color: '#D97706', fontWeight: 'bold' }}>{spot.stayTime}</Text></View>}
-                        {spot.moveText && <Text style={{ fontSize: 11, color: '#6B7280', marginTop: 4 }}>• {spot.moveText}</Text>}
-                      </View>
-                    </View>
-                  ))}
 
-                  <View style={styles.arrivalNoticePill}>
-                    <Text style={{ fontSize: 24 }}>🎯</Text>
-                    <View>
-                      <Text style={{ fontSize: 14, fontWeight: '900', color: '#312E81' }}>경기 시작 40분 전 도착 예정</Text>
-                      <Text style={{ fontSize: 11, color: '#6B7280', marginTop: 2 }}>경기 시작 17:00 · 도착 예정 16:20</Text>
-                    </View>
-                  </View>
-                </ScrollView>
+                        <View style={styles.timelineContentColNew}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <Text style={styles.categoryTextGreyNew}>{spot.category || '장소'}</Text>
+                            <Text style={styles.timelineItemTitleLargeNew}>{spot.name}</Text>
+                          </View>
+                          
+                          <Text style={styles.timelineItemDescGreyNew}>추천 테마: {spot.category}</Text>
 
-                <View style={styles.footer}>
-                  <TouchableOpacity style={styles.purpleBtn} onPress={() => setFlow('mapView')}><Text style={styles.purpleBtnText}>🗺️ 지도에서 보기</Text></TouchableOpacity>
-                  <TouchableOpacity style={styles.bookmarkOutlineBtn} onPress={handleSaveCurrentCourse} disabled={isSubmitting}>
-                    <Bookmark size={14} color="#5B44E8" />
-                    <Text style={{ color: '#5B44E8', fontWeight: 'bold', fontSize: 13 }}>코스 저장하기</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
+                          {/* 카테고리에 따라 갤러리 렌더링 */}
+                          {(spot.category.includes('음식') || spot.category.includes('맛집') || spot.category.includes('카페') || spot.category.includes('관광')) && (
+                            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, marginTop: 12 }}>
+                              <View style={styles.mockImageRectSmall} />
+                              <View style={styles.mockImageRectSmall} />
+                              <View style={styles.mockImageRectSmall} />
+                            </ScrollView>
+                          )}
 
-            {/* 지도 동선 View */}
-            {flow === 'mapView' && (
-              <View style={styles.flex1}>
-                <View style={styles.header}>
-                  <TouchableOpacity onPress={() => setFlow('courseDetail')} style={styles.backBtn}><ArrowLeft size={18} color="#0F0E1A" /><Text style={styles.backText}>뒤로</Text></TouchableOpacity>
-                  <View style={styles.rowBetween}>
-                    <Text style={styles.headerSub}>지도 동선</Text>
-                    <View style={styles.greenNavTag}><View style={styles.greenDot} /><Text style={{ fontSize: 10, color: '#059669', fontWeight: 'bold' }}>경로 안내 중</Text></View>
-                  </View>
-                  <Text style={styles.headerDesc}>A코스 · 수원역 ➔ KT위즈파크</Text>
-                </View>
-
-                {/* 지도 시각화 Box */}
-                <View style={styles.mapCanvasBox}>
-                  <View style={styles.northBadge}><Text style={{ fontWeight: 'bold', fontSize: 12 }}>N</Text></View>
-                  <View style={styles.scaleLine}><Text style={{ fontSize: 9, color: '#6B7280' }}>500m</Text></View>
-                  <View style={[styles.mapPin, { top: 120, left: 60, backgroundColor: '#6B7280' }]}><Text style={styles.mapPinText}>1</Text></View>
-                  <View style={[styles.mapPin, { top: 80, left: 130, backgroundColor: '#D97706' }]}><Text style={styles.mapPinText}>2</Text></View>
-                  <View style={[styles.mapPin, { top: 40, left: 200, backgroundColor: '#10B981' }]}><Text style={styles.mapPinText}>3</Text></View>
-                  <View style={[styles.mapPin, { top: 90, left: 260, backgroundColor: '#5B44E8' }]}><Text style={styles.mapPinText}>4</Text></View>
-                </View>
-
-                <ScrollView style={styles.flex1} contentContainerStyle={{ padding: 20, gap: 12 }}>
-                  {[
-                    { num: '1', title: '수원역', desc: 'KTX · 지하철 1호선', move: '↓ 도보 15분' },
-                    { num: '2', title: '로컬 맛집', desc: '영통구 로컬 한식당', move: '↓ 도보 10분' },
-                    { num: '3', title: '행궁동 카페게리', desc: '팔달구 카페 · 수원 화성 근처', move: '↓ 버스 25분' },
-                    { num: '4', title: '수원 KT위즈파크', desc: '팔달구 · 주차 가능', move: '' },
-                  ].map((node) => (
-                    <View key={node.num}>
-                      <View style={styles.mapListRow}>
-                        <View style={styles.mapListNum}><Text style={{ color: '#FFF', fontWeight: 'bold' }}>{node.num}</Text></View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={{ fontWeight: 'bold', fontSize: 14 }}>{node.title}</Text>
-                          <Text style={{ fontSize: 11, color: '#6B7280', marginTop: 2 }}>{node.desc}</Text>
+                          {/* 이동 수단 가이드 */}
+                          {idx < arr.length - 1 && (
+                            <View style={styles.moveInfoBoxClear}>
+                              <Text style={styles.moveInfoTextBold}>
+                                {transport.includes('자차') ? '🚗' : transport.includes('대중교통') ? '🚌' : '🚶'} 다음 장소까지 {
+                                  spot.moveText || (transport.includes('자차') ? '차량 약 10분' : transport.includes('대중교통') ? '대중교통 약 20분' : '도보 약 15분')
+                                }
+                              </Text>
+                            </View>
+                          )}
                         </View>
-                        <ChevronRight size={16} color="#9CA3AF" />
                       </View>
-                      {node.move !== '' && <Text style={{ fontSize: 11, color: '#9CA3AF', marginLeft: 36, marginVertical: 4 }}>{node.move}</Text>}
-                    </View>
-                  ))}
-                </ScrollView>
+                    ))}
+                  </ScrollView>
 
-                <View style={styles.footer}>
-                  <TouchableOpacity style={styles.purpleBtn} onPress={handleConfirmTrip} disabled={isSubmitting}>
-                    {isSubmitting ? <ActivityIndicator color="#FFF" /> : <Text style={styles.purpleBtnText}>코스 확정하기</Text>}
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.changeStatusBtn} onPress={() => setIsChangeModalOpen(true)}>
-                    <RotateCcw size={14} color="#5B44E8" />
-                    <Text style={{ color: '#5B44E8', fontWeight: 'bold', fontSize: 13 }}>상황이 바뀌었어요</Text>
-                  </TouchableOpacity>
+                  {/* 하단 고정 액션 버튼 */}
+                  <View style={styles.detailFixedFooter}>
+                    <TouchableOpacity style={styles.purpleBtn} onPress={handleConfirmTrip} disabled={isSubmitting}>
+                      {isSubmitting ? <ActivityIndicator color="#FFF" /> : <Text style={styles.purpleBtnText}>코스 확정하기</Text>}
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.bookmarkOutlineBtnNew} onPress={handleSaveCurrentCourse} disabled={isSubmitting}>
+                      <Bookmark size={14} color="#5B44E8" />
+                      <Text style={{ color: '#5B44E8', fontWeight: 'bold', fontSize: 13 }}>코스 저장하기</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               </View>
             )}
@@ -2394,4 +2463,84 @@ const styles = StyleSheet.create({
   loginLinkText: { color: '#6B7280', fontWeight: 'bold', fontSize: 14 },
   loginLinkDivider: { color: '#D1D5DB' },
   loginLinkHighlight: { color: '#4F46E5', fontWeight: 'bold', fontSize: 14 },
+
+  // --- 새로 추가될 지도 및 바텀시트 UI 스타일 ---
+
+  enhancedMapContainer: {
+    flex: 1, // 상단 지도 영역 (유동적으로 조절됨)
+    backgroundColor: '#E5E7EB', // 지도 이미지가 들어갈 배경색
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  simulatedPath: {
+    position: 'absolute',
+    top: '38%', left: '28%', right: '28%', bottom: '23%',
+    borderTopWidth: 2, borderLeftWidth: 2, borderBottomWidth: 2,
+    borderColor: '#9CA3AF',
+    borderStyle: 'dashed',
+    borderRadius: 20,
+  },
+  mapPinYellow: {
+    position: 'absolute',
+    width: 26, height: 26, borderRadius: 13,
+    backgroundColor: '#FDE047',
+    justifyContent: 'center', alignItems: 'center',
+    borderWidth: 2, borderColor: '#FFF',
+    shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 4, shadowOffset: { width: 0, height: 2 },
+  },
+  mapPinTextDark: { color: '#374151', fontSize: 11, fontWeight: '900' },
+
+  bottomSheetContainer: {
+    flex: 1.4, // 리스트 영역이 더 많은 비중을 차지하도록
+    backgroundColor: '#FFF',
+    borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    marginTop: -20, // 지도 영역 위로 살짝 겹쳐지도록
+    shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 10, shadowOffset: { width: 0, height: -4 },
+    elevation: 5,
+  },
+  bottomSheetContent: { padding: 24, paddingBottom: 40 },
+  bottomSheetTitle: { fontSize: 19, fontWeight: '900', color: '#111827', marginTop: 4, textAlign: 'center' },
+
+  timelineItemRow: { flexDirection: 'row', gap: 16 },
+  timelineLeftCol: { alignItems: 'center', width: 26 },
+  timelineYellowPin: { width: 26, height: 26, borderRadius: 13, backgroundColor: '#FDE047', justifyContent: 'center', alignItems: 'center', zIndex: 1 },
+  timelinePinText: { color: '#374151', fontSize: 12, fontWeight: '900' },
+  timelineVerticalLine: { width: 2, flex: 1, backgroundColor: '#E5E7EB', marginVertical: -4, zIndex: 0 },
+
+  timelineContentCol: { flex: 1, paddingBottom: 24 },
+  categoryPill: { backgroundColor: '#F3F4F6', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
+  categoryPillText: { fontSize: 10, color: '#4B5563', fontWeight: 'bold' },
+  timelineItemTitle: { fontSize: 16, fontWeight: '900', color: '#111827' },
+  timelineItemDesc: { fontSize: 13, color: '#6B7280', marginTop: 4 },
+
+  mockImageRect: { width: 100, height: 100, borderRadius: 12, backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#E2E8F0' },
+
+  moveInfoBox: { marginTop: 12, padding: 12, backgroundColor: '#F8FAFC', borderRadius: 10, borderWidth: 1, borderColor: '#F1F5F9' },
+  moveInfoText: { fontSize: 12, color: '#6B7280', fontWeight: '600' },
+
+  bottomSheetFooter: { marginTop: 16, gap: 10 },
+
+  // --- 지도 상세(courseDetail) 전용 스타일 ---
+  detailTopHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12, backgroundColor: '#FFF', zIndex: 10 },
+  detailMapArea: { height: 260, backgroundColor: '#E2E8F0', position: 'relative' },
+  simulatedPathNew: { position: 'absolute', top: 60, left: 60, right: 60, bottom: 60, borderWidth: 2, borderColor: '#9CA3AF', borderStyle: 'dashed', borderRadius: 20 },
+  mapPinYellowNew: { position: 'absolute', width: 28, height: 28, borderRadius: 14, backgroundColor: '#FDE047', justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#FFF', shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 3, elevation: 3 },
+  
+  detailTimelineSheet: { flex: 1, backgroundColor: '#FFF', borderTopLeftRadius: 30, borderTopRightRadius: 30, marginTop: -30, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 10, elevation: 5, paddingTop: 12 },
+  bottomSheetTitleCenter: { fontSize: 18, fontWeight: '900', color: '#111827', textAlign: 'center', marginBottom: 10 },
+  
+  timelineOrangePin: { width: 26, height: 26, borderRadius: 13, backgroundColor: '#10B981', justifyContent: 'center', alignItems: 'center', zIndex: 1 },
+  timelinePinTextWhite: { color: '#FFF', fontSize: 12, fontWeight: '900' },
+  timelineVerticalLineSolid: { width: 2, flex: 1, backgroundColor: '#10B981', marginVertical: -2, zIndex: 0 },
+  timelineContentColNew: { flex: 1, paddingBottom: 30, paddingLeft: 8 },
+  
+  categoryTextGreyNew: { fontSize: 11, color: '#6B7280', fontWeight: '800', backgroundColor: '#F1F5F9', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
+  timelineItemTitleLargeNew: { fontSize: 16, fontWeight: '900', color: '#111827' },
+  timelineItemDescGreyNew: { fontSize: 12, color: '#9CA3AF', marginTop: 4 },
+  
+  moveInfoBoxClear: { marginTop: 16, padding: 14, backgroundColor: '#F8FAFC', borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0' },
+  moveInfoTextBold: { fontSize: 13, color: '#4B5563', fontWeight: '700' },
+  detailFixedFooter: { padding: 16, backgroundColor: '#FFF', borderTopWidth: 1, borderTopColor: '#F1F5F9', gap: 8 },
+  bookmarkOutlineBtnNew: { height: 48, borderRadius: 24, borderWidth: 1.5, borderColor: '#5B44E8', backgroundColor: '#FFF', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 6 },
 });
+
