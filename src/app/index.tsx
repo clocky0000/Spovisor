@@ -1,25 +1,19 @@
-import * as Location from 'expo-location';
 import { Image } from 'expo-image';
+import * as Location from 'expo-location';
 import { router } from 'expo-router';
 import {
   ArrowLeft,
-  Bookmark,
   Calendar as CalendarIcon,
-  Camera,
   Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   Clock,
   Coffee,
-  Filter,
-  Heart,
   Home,
   Map as MapIcon,
   Navigation,
   Pencil,
-  Share2,
-  ShoppingBag,
   Star,
   User,
   X
@@ -27,9 +21,10 @@ import {
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Animated,
   Alert,
+  Animated,
   Modal,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -37,19 +32,16 @@ import {
   TouchableOpacity,
   View
 } from 'react-native';
-import Svg, { Polyline } from 'react-native-svg';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { OFFICIAL_GAMES, type ScheduleGame } from '../schedule';
-
 import {
   addFavoritePlace,
   changePassword,
   clearAuthSession,
   createRecommendationRequest,
   createTrip,
-  deleteTrip,
   deleteFavoritePlace,
   deleteMyAccount,
+  deleteTrip,
   getMyProfile,
   getRecommendationRequestStatus,
   listFavoritePlaces,
@@ -59,8 +51,8 @@ import {
   replaceFavoriteTeams,
   saveAuthSession,
   saveUserSurvey,
-  searchSpots,
   searchSpotImages,
+  searchSpots,
   submitTripFeedback,
   updateMyProfile,
   type FavoritePlace,
@@ -69,6 +61,16 @@ import {
   type Trip,
   type UserProfile,
 } from '../lib/api';
+import { OFFICIAL_GAMES, type ScheduleGame } from '../schedule';
+
+// 💡 웹에서는 네이버 지도를 아예 안 읽도록 조건부로 불러옵니다.
+let NaverMapView: any, Marker: any, Path: any;
+if (Platform.OS !== 'web') {
+  const NaverMap = require('@mj-studio/react-native-naver-map');
+  NaverMapView = NaverMap.NaverMapView;
+  Marker = NaverMap.Marker;
+  Path = NaverMap.Path;
+}
 
 // ─────────────────────────────────────────────────────────
 // Types
@@ -183,24 +185,21 @@ const getMapRoutePoints = (spots: CourseSpot[]): MapRoutePoint[] => {
 };
 
 function MapRouteOverlay({ spots }: { spots: CourseSpot[] }) {
-  const points = getMapRoutePoints(spots);
+  // 💡 map_x, map_y가 유효한 장소만 필터링합니다.
+  const validSpots = spots.filter(
+    (spot) => spot.map_x != null && spot.map_y != null && spot.map_x !== '' && spot.map_y !== ''
+  );
+  
+  const points = getMapRoutePoints(validSpots);
   if (points.length === 0) return null;
 
   return (
     <View pointerEvents="none" style={styles.mapRouteOverlay}>
-      <Svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none">
-        <Polyline
-          points={points.map((point) => `${point.x},${point.y}`).join(' ')}
-          fill="none"
-          stroke="#5B44E8"
-          strokeWidth="1.4"
-          strokeDasharray="2.5 1.4"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </Svg>
       {points.map((point, index) => (
-        <View key={`map-marker-${index}`} style={[styles.mapRouteMarker, { left: `${point.x}%`, top: `${point.y}%` }]}>
+        <View 
+          key={`map-marker-${index}`} 
+          style={[styles.mapRouteMarker, { left: `${point.x}%`, top: `${point.y}%` }]}
+        >
           <Text style={styles.mapRouteMarkerText}>{index + 1}</Text>
         </View>
       ))}
@@ -316,91 +315,11 @@ function normalizeTeamName(value: string) {
   return aliases[compact] ?? compact;
 }
 
-const MOCK_COURSES: Course[] = [
-  {
-    id: 1,
-    code: 'A',
-    title: 'A코스',
-    conceptTag: '미식 중심',
-    duration: '3시간 10분',
-    moveTime: '35분',
-    distance: '4.2km',
-    routeText: '수원역 ➔ 로컬 맛집 ➔ 행궁동 카페 ➔ 경기장',
-    tags: [
-      { emoji: '🍜', label: '맛집' },
-      { emoji: '☕', label: '카페' },
-      { emoji: '🏟️', label: '경기장' },
-    ],
-    description: '경기 전 여유로운 로컬 맛집과 카페를 즐기는 미식 중심 코스예요.',
-    saved: true,
-    spots: [
-      { id: 101, name: '수원역 도착', category: '이동', time: '12:00', emoji: '🚆', description: 'KTX · 지하철 1호선' },
-      { id: 102, name: '로컬 맛집 점심', category: '맛집', time: '12:25', stayTime: '예상 체류 60분', moveText: '도보 10분', emoji: '🍜', description: '영통구 로컬 한식당', visited: true },
-      { id: 103, name: '행궁동 카페게리', category: '카페', time: '13:40', stayTime: '예상 체류 45분', moveText: '도보 15분', emoji: '☕', description: '팔달구 카페 · 수원 화성 근처', visited: true },
-      { id: 104, name: '수원 화성 행궁', category: '관광지', time: '14:55', stayTime: '예상 체류 50분', moveText: '도보 12분', emoji: '🏯', description: '세계문화유산 관광', visited: false },
-      { id: 105, name: '수원 KT위즈파크 도착', category: '경기장', time: '17:20', moveText: '버스 35분', emoji: '🏟️', description: '팔달구 · 주차 가능', visited: true },
-    ],
-  },
-  {
-    id: 2,
-    code: 'B',
-    title: 'B코스',
-    conceptTag: '여유로운 실내',
-    duration: '2시간 45분',
-    moveTime: '28분',
-    distance: '3.8km',
-    routeText: '수원역 ➔ 스타필드 ➔ 효뜨 ➔ 경기장',
-    tags: [
-      { emoji: '🛍️', label: '쇼핑' },
-      { emoji: '🍽️', label: '음식점' },
-      { emoji: '🏟️', label: '경기장' },
-    ],
-    description: '스타필드 중심의 실내 쾌적 동선 코스입니다.',
-    saved: false,
-    spots: [],
-  },
-  {
-    id: 3,
-    code: 'C',
-    title: 'C코스',
-    conceptTag: '로컬 힐링',
-    duration: '3시간 30분',
-    moveTime: '42분',
-    distance: '5.1km',
-    routeText: '수원역 ➔ 화성행궁 ➔ 로컬 카페 ➔ 경기장',
-    tags: [
-      { emoji: '🏯', label: '관광지' },
-      { emoji: '☕', label: '카페' },
-      { emoji: '🏟️', label: '경기장' },
-    ],
-    description: '수원 화성 성곽길과 한적한 골목 카페를 거니는 코스입니다.',
-    saved: false,
-    spots: [],
-  },
-];
-
 const PRESET_COURSES: PresetCourse[] = [
   { id: 1, title: '지하철 완전정복 코스', routeText: '잠실역 ➔ 잠실야구장', time: '35분', distance: '1.8km', difficulty: '쉬움', rating: 4.9, nodes: ['잠실역 2호선', '잠실나루역', '선수촌공원', '잠실종합운동장'], icon: '🚆' },
   { id: 2, title: '버스 + 맛집 탐방 코스', routeText: '강남역 ➔ 서울 월드컵경기장', time: '55분', distance: '4.2km', difficulty: '보통', rating: 4.7, nodes: ['강남역', '홍대입구역', '망원시장'], icon: '🚌' },
   { id: 3, title: '드라이브 & 파킹 코스', routeText: '올림픽대로 ➔ 잠실야구장', time: '28분', distance: '6.5km', difficulty: '쉬움', rating: 4.5, nodes: ['올림픽대로 진입', '잠실IC', '주차타워 P3'], icon: '🚗' },
   { id: 4, title: '문화 & 쇼핑 루트', routeText: '코엑스 ➔ 수원 월드컵경기장', time: '1시간 20분', distance: '12.3km', difficulty: '어려움', rating: 4.3, nodes: ['코엑스 몰', '강남터미널', '수원역'], icon: '🛍️' },
-];
-
-const SAVED_ITEMS = [
-  { stadium: '잠실 야구장', type: '지하철 코스', date: '2026.06.22', icon: '⚾' },
-  { stadium: '서울 월드컵경기장', type: '버스 탐방 코스', date: '2026.06.18', icon: '⚽' },
-  { stadium: '잠실 야구장', type: '드라이브 코스', date: '2026.06.10', icon: '🚗' },
-  { stadium: '수원 월드컵경기장', type: '지하철 코스', date: '2026.05.30', icon: '🚆' },
-  { stadium: '인천SSG랜더스필드', type: '버스 코스', date: '2026.05.14', icon: '⚾' },
-  { stadium: '잠실 야구장', type: '쇼핑 루트', date: '2026.05.01', icon: '🛍️' },
-];
-
-const MY_TRIP_LIST = [
-  { stadium: '잠실야구장', match: 'LG vs 두산', date: '2026.06.29', tag: '지하철 코스', rating: 5, icon: '⚾' },
-  { stadium: '서울 월드컵경기장', match: 'FC서울 vs 전북', date: '2026.06.14', tag: '버스 탐방 코스', rating: 4, icon: '⚽' },
-  { stadium: '수원 KT위즈파크', match: 'kt vs NC', date: '2026.05.30', tag: '드라이브 코스', rating: 5, icon: '⚾' },
-  { stadium: 'SSG랜더스필드', match: 'SSG vs 롯데', date: '2026.05.14', tag: '지하철 코스', rating: 4, icon: '⚾' },
-  { stadium: '광주-기아 챔피언스필드', match: 'KIA vs 삼성', date: '2026.04.20', tag: '버스 코스', rating: 3, icon: '⚾' },
 ];
 
 const MASCOTS: MascotOption[] = [
@@ -415,13 +334,25 @@ const MASCOTS: MascotOption[] = [
 ];
 
 const COLOR_OPTIONS: ColorOption[] = [
-  { id: 'indigo', name: '인디고', hex: '#5B44E8' },
   { id: 'red', name: '레드', hex: '#EF4444' },
-  { id: 'emerald', name: '에메랄드', hex: '#10B981' },
-  { id: 'violet', name: '바이올렛', hex: '#8B5CF6' },
-  { id: 'amber', name: '앰버', hex: '#F59E0B' },
-  { id: 'sky', name: '스카이', hex: '#0EA5E9' },
+  { id: 'blue', name: '블루', hex: '#3B82F6' },
+  { id: 'orange', name: '오렌지', hex: '#F97316' },
+  { id: 'purple', name: '퍼플', hex: '#8B5CF6' },
+  { id: 'black', name: '블랙', hex: '#1F2937' },
 ];
+
+const TEAM_MASCOTS: Record<string, string> = {
+  'KIA': '🐯',
+  '한화': '🦅',
+  '두산': '🐻',
+  '삼성': '🦁',
+  'SSG': '🐶',
+  'LG': '👯‍♂️',
+  'NC': '🦖',
+  'KT': '🧙‍♂️',
+  '키움': '🦸‍♂️',
+  '롯데': '🕊️',
+}
 
 // ─────────────────────────────────────────────────────────
 // Splash & Login Components (Pure StyleSheet)
@@ -611,11 +542,12 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
   const [isSearchingOrigin, setIsSearchingOrigin] = useState(false);
   const [favoritePlaceLabel, setFavoritePlaceLabel] = useState('');
   const [originSource, setOriginSource] = useState<'gps' | 'search' | null>(null);
+  const [tripDuration, setTripDuration] = useState<string>('당일치기');
 
   // Course States
   // AI 모델 연동 전까지는 추천 결과를 비워둡니다.
   const [courses, setCourses] = useState<Course[]>([]);
-  const [selectedCourse, setSelectedCourse] = useState<Course>(MOCK_COURSES[0]);
+  const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
   const [spotImages, setSpotImages] = useState<Record<number, string[]>>({});
   const [isLoadingSpotImages, setIsLoadingSpotImages] = useState(false);
   const [expandedCourseId, setExpandedCourseId] = useState<number | null>(1);
@@ -626,6 +558,15 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
   const [homeNotice, setHomeNotice] = useState<string | null>(null);
   const [activeTripPromptOpen, setActiveTripPromptOpen] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+  const [duplicateCoursePromptOpen, setDuplicateCoursePromptOpen] = useState(false);
+  const [existingTripToReplace, setExistingTripToReplace] = useState<Trip | null>(null);
+
+  const activeTripList = useMemo(() => {
+    return tripList
+      .filter((trip) => trip.status === 'ACTIVE' && trip.course && (!trip.tripDate || trip.tripDate >= currentDateKey))
+      .sort((a, b) => (a.tripDate || '').localeCompare(b.tripDate || ''));
+  }, [tripList]);
+  
 
   // Modals & Feedback
   const [isChangeModalOpen, setIsChangeModalOpen] = useState(false);
@@ -880,6 +821,8 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
 
   const buildSurvey = () => ({
     '경기장': aiStadiumName(selectedGame?.stadium ?? '수원 KT위즈파크'),
+    '출발지': origin,
+    '여행기간': tripDuration,
     '여행_방식': tripTiming,
     '이동방식': transport.includes('자차') ? '자차+도보' : transport.includes('대중교통') ? '대중교통+도보' : '도보 단독',
     '최대이동시간': maxTime,
@@ -939,8 +882,9 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
   }, [activeTrip]);
 
   useEffect(() => {
-    const isCourseDetailVisible = flow === 'courseDetail' || (tab === 'course' && Boolean(activeTrip));
-    if (!isCourseDetailVisible || selectedCourse.spots.length === 0) return;
+    const isCourseDetailVisible = flow === 'courseDetail' || (tab === 'course' && selectedCourse !== null);
+    // 💡 selectedCourse가 null이 아닐 때만 spots에 접근하도록 조건 추가
+    if (!isCourseDetailVisible || !selectedCourse || selectedCourse.spots.length === 0) return;
 
     let cancelled = false;
     setSpotImages({});
@@ -959,7 +903,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
     });
 
     return () => { cancelled = true; };
-  }, [activeTrip, flow, selectedCourse.id, selectedCourse.routeText, tab]);
+  }, [flow, selectedCourse, tab]); // 💡 의존성 배열도 selectedCourse 객체 전체로 깔끔하게 변경
 
   const renderSpotImages = (spot: CourseSpot) => {
     const urls = spotImages[spot.id] ?? [];
@@ -980,11 +924,33 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
     setSelectedGameDate(game.date);
     setStartTime(game.time);
 
-    if (activeTrip) {
-      setActiveTripPromptOpen(true);
+    const matchStadium = aiStadiumName(game.stadium);
+    const existing = tripList.find((t) => 
+      t.status === 'ACTIVE' && 
+      t.tripDate === game.date && 
+      aiStadiumName(t.stadium) === matchStadium
+    );
+
+    if (existing) {
+      setExistingTripToReplace(existing);
+      setDuplicateCoursePromptOpen(true);
       return;
     }
 
+    setFlow('gameInfo');
+  };
+
+  const handleConfirmRecreateCourse = async () => {
+    if (existingTripToReplace) {
+      try {
+        await deleteTrip(existingTripToReplace.id);
+        setTripList((prev) => prev.filter((t) => t.id !== existingTripToReplace.id));
+      } catch (e) {
+        console.error('기존 코스 삭제 실패:', e);
+      }
+    }
+    setDuplicateCoursePromptOpen(false);
+    setExistingTripToReplace(null);
     setFlow('gameInfo');
   };
 
@@ -1114,6 +1080,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
   };
 
   const handleConfirmTrip = async () => {
+    if (!selectedCourse) return;
     setIsSubmitting(true);
     try {
       const trip = await createTrip({
@@ -1125,9 +1092,10 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
       });
       setCurrentTripId(trip.id);
       setTripList((previous) => [trip, ...previous]);
-      setTab('home');
+      setTab('course'); // 💡 코스 탭으로 이동
+      setSelectedCourse(null); // 목록 화면을 먼저 보여주기 위해 null 처리
       setFlow('home');
-      setHomeNotice('코스가 확정됐어요. 코스 탭에서 진행 중인 동선을 확인해주세요.');
+      setHomeNotice('코스가 확정됐어요! 코스 탭에서 저장된 일정을 확인해보세요.');
       setTimeout(() => setHomeNotice(null), 3600);
     } catch (error) {
       Alert.alert('여행 기록 실패', error instanceof Error ? error.message : '여행 기록을 저장하지 못했습니다.');
@@ -1294,9 +1262,47 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                   {/* 달력 */}
                   <View style={styles.calendarContainer}>
                     <View style={styles.calendarHeader}>
-                      <TouchableOpacity style={styles.calNavBtn} onPress={() => setCalendarMonth((month) => { const next = new Date(month.getFullYear(), month.getMonth() - 1, 1); setSelectedDate(dateKey(next.getFullYear(), next.getMonth(), 1)); setGameViewMode('all'); return next; })}><ChevronLeft size={16} color="#6B7280" /></TouchableOpacity>
-                      <Text style={styles.calendarMonthText}>{calendarMonth.getFullYear()}년 {calendarMonth.getMonth() + 1}월</Text>
-                      <TouchableOpacity style={styles.calNavBtn} onPress={() => setCalendarMonth((month) => { const next = new Date(month.getFullYear(), month.getMonth() + 1, 1); setSelectedDate(dateKey(next.getFullYear(), next.getMonth(), 1)); setGameViewMode('all'); return next; })}><ChevronRight size={16} color="#6B7280" /></TouchableOpacity>
+                      {/* 이전 달 버튼 */}
+                      <TouchableOpacity
+                        style={styles.calNavBtn}
+                        onPress={() =>
+                          setCalendarMonth((month) => {
+                            const prev = new Date(month.getFullYear(), month.getMonth() - 1, 1);
+                            const prevMonthStr = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, '0')}`;
+                            // 이전 달에 일정이 있는 가장 빠른 날짜 찾기
+                            const firstGame = GAMES.find((game) => game.date.startsWith(prevMonthStr));
+        
+                            setSelectedDate(firstGame ? firstGame.date : dateKey(prev.getFullYear(), prev.getMonth(), 1));
+                            setGameViewMode('all');
+                            return prev;
+                          })
+                        }
+                      >
+                        <ChevronLeft size={16} color="#6B7280" />
+                      </TouchableOpacity>
+
+                      <Text style={styles.calendarMonthText}>
+                        {calendarMonth.getFullYear()}년 {calendarMonth.getMonth() + 1}월
+                      </Text>
+
+                      {/* 다음 달 버튼 */}
+                      <TouchableOpacity
+                        style={styles.calNavBtn}
+                        onPress={() =>
+                          setCalendarMonth((month) => {
+                            const next = new Date(month.getFullYear(), month.getMonth() + 1, 1);
+                            const nextMonthStr = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`;
+                            // 다음 달에 일정이 있는 가장 빠른 날짜 찾기
+                            const firstGame = GAMES.find((game) => game.date.startsWith(nextMonthStr));
+        
+                            setSelectedDate(firstGame ? firstGame.date : dateKey(next.getFullYear(), next.getMonth(), 1));
+                            setGameViewMode('all');
+                            return next;
+                          })
+                        }
+                      >
+                        <ChevronRight size={16} color="#6B7280" />
+                      </TouchableOpacity>
                     </View>
 
                     <View style={styles.weekRow}>
@@ -1350,33 +1356,54 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
 
                   {gameViewMode === 'favorites' && favoriteTeams.length === 0 && <Text style={styles.emptyListText}>설정한 관심 구단이 없습니다.</Text>}
                   {visibleGames.length === 0 && !(gameViewMode === 'favorites' && favoriteTeams.length === 0) && <Text style={styles.emptyListText}>해당 날짜에 경기가 없습니다.</Text>}
-                  {visibleGames.map((game) => (
-                    <TouchableOpacity key={game.id} style={styles.gameCard} onPress={() => handleSelectGame(game)}>
-                      <View style={styles.rowBetween}>
-                        <View style={styles.sportBadge}><Text style={styles.sportBadgeText}>{game.sport === 'baseball' ? '⚾ 야구' : game.sport === 'soccer' ? '⚽ 축구' : '🏐 배구'}</Text></View>
-                        <View style={styles.rowCenter}><Clock size={12} color="#6B7280" /><Text style={{ fontSize: 12, color: '#6B7280' }}>{game.time}</Text></View>
-                      </View>
-                      <View style={styles.matchRow}>
-                        <View style={{ alignItems: 'center' }}>
-                          <View style={[styles.emojiCircle, { borderColor: '#FCA5A5', borderWidth: 2 }]}>
-                            <Text style={{ fontSize: 22 }}>{game.homeEmoji}</Text>
+                  {visibleGames.map((game) => {
+                    const isBaseball = game.sport === 'baseball';
+                    const isSoccer = game.sport === 'soccer';
+                    const badgeBg = isBaseball ? '#EEF2FF' : isSoccer ? '#FEE2E2' : '#ECFDF5';
+                    const badgeTextCol = isBaseball ? '#5B44E8' : isSoccer ? '#EF4444' : '#10B981';
+
+                    const defaultEmoji = isBaseball ? '⚾' : isSoccer ? '⚽' : '🏐';
+                    const homeEmoji = TEAM_MASCOTS[game.home] || defaultEmoji;
+                    const awayEmoji = TEAM_MASCOTS[game.away] || defaultEmoji;
+
+                    return (
+                      <TouchableOpacity key={game.id} style={styles.gameCard} onPress={() => handleSelectGame(game)}>
+                        <View style={styles.rowBetween}>
+                          {/* 수정된 뱃지 영역 */}
+                          <View style={[styles.sportBadge, { backgroundColor: badgeBg }]}>
+                            <Text style={[styles.sportBadgeText, { color: badgeTextCol }]}>
+                              {isBaseball ? '⚾ 야구' : isSoccer ? '⚽ 축구' : '🏐 배구'}
+                            </Text>
                           </View>
-                          <Text style={styles.teamText}>{game.home}</Text>
-                          <Text style={styles.teamSub}>홈</Text>
+                        < View style={styles.rowCenter}>
+                            <Clock size={12} color="#6B7280" />
+                            <Text style={{ fontSize: 12, color: '#6B7280' }}>{game.time}</Text>
+                          </View>
                         </View>
-                        <Text style={styles.vsText}>VS</Text>
-                        <View style={{ alignItems: 'center' }}>
-                          <View style={styles.emojiCircle}><Text style={{ fontSize: 22 }}>🐻</Text></View>
-                          <Text style={styles.teamText}>{game.away}</Text>
-                          <Text style={styles.teamSub}>원정</Text>
+      
+                        {/* 기존 팀 렌더링 코드 유지... */}
+                        <View style={styles.matchRow}>
+                          <View style={{ alignItems: 'center' }}>
+                            <View style={[styles.emojiCircle, { borderColor: '#FCA5A5', borderWidth: 2 }]}>
+                              <Text style={{ fontSize: 22 }}>{homeEmoji}</Text>
+                            </View>
+                            <Text style={styles.teamText}>{game.home}</Text>
+                            <Text style={styles.teamSub}>홈</Text>
+                          </View>
+                          <Text style={styles.vsText}>VS</Text>
+                          <View style={{ alignItems: 'center' }}>
+                            <View style={styles.emojiCircle}><Text style={{ fontSize: 22 }}>{awayEmoji}</Text></View>
+                            <Text style={styles.teamText}>{game.away}</Text>
+                            <Text style={styles.teamSub}>원정</Text>
+                          </View>
                         </View>
-                      </View>
-                      <View style={styles.rowBetween}>
-                        <View style={styles.rowCenter}><Navigation size={12} color="#6B7280" /><Text style={{ fontSize: 12, color: '#6B7280' }}>{game.stadium}</Text></View>
-                        <View style={styles.rowCenter}><Text style={{ fontSize: 12, fontWeight: 'bold', color: '#5B44E8' }}>코스 보기</Text><ChevronRight size={13} color="#5B44E8" /></View>
-                      </View>
-                    </TouchableOpacity>
-                  ))}
+                        <View style={styles.rowBetween}>
+                          <View style={styles.rowCenter}><Navigation size={12} color="#6B7280" /><Text style={{ fontSize: 12, color: '#6B7280' }}>{game.stadium}</Text></View>
+                          <View style={styles.rowCenter}><Text style={{ fontSize: 12, fontWeight: 'bold', color: '#5B44E8' }}>코스 보기</Text><ChevronRight size={13} color="#5B44E8" /></View>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
                 </ScrollView>
               </View>
             )}
@@ -1482,6 +1509,15 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                   <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
                     <TextInput value={favoritePlaceLabel} onChangeText={setFavoritePlaceLabel} style={[styles.favoriteLabelInput, { flex: 1 }]} placeholder="등록 이름 (예: 집)" />
                     <TouchableOpacity style={styles.favoriteSaveBtn} onPress={saveCurrentOriginAsFavorite}><Text style={styles.favoriteSaveBtnText}>자주 가는 장소 저장</Text></TouchableOpacity>
+                  </View>
+
+                  <Text style={styles.inputLabel}>여행 기간</Text>
+                  <View style={{ flexDirection: 'row', gap: 8}}>
+                    {['당일치기', '1박 2일', '2박 3일', '3박 4일'].map((t) => (
+                      <TouchableOpacity key={t} onPress={() => setTripDuration(t)} style={[styles.outlineBtn, tripDuration === t && styles.outlineBtnActive]}>
+                        <Text style={[styles.outlineBtnText, tripDuration === t && styles.outlineBtnTextActive]}>{t}</Text>
+                      </TouchableOpacity>
+                    ))}
                   </View>
 
                   <Text style={styles.inputLabel}>이동수단 (복수 선택 가능)</Text>
@@ -1850,7 +1886,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
             {/* ========================================== */}
             {/* 4단계: 코스 상세 (디자인 4번 지도+바텀시트) */}
             {/* ========================================== */}
-            {flow === 'courseDetail' && (
+            {flow === 'courseDetail' && selectedCourse && (
               <View style={[styles.flex1, { backgroundColor: '#F8FAFC' }]}>
                 {/* 상단 헤더 */}
                 <View style={styles.detailTopHeader}>
@@ -1864,14 +1900,49 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                   </View>
                 </View>
 
-                {/* 지도 시각화 영역 (웹 테스트용 구글 지도 임베드) */}
+                {/* 4단계: 코스 상세 화면 내부의 detailMapArea 수정 */}
                 <View style={styles.detailMapArea}>
-                  <iframe
-                    title="web-map"
-                    src={`https://maps.google.com/maps?q=${Number(selectedCourse.spots[0]?.map_y) || 37.5121513},${Number(selectedCourse.spots[0]?.map_x) || 127.0719095}&z=14&output=embed`}
-                    style={{ width: '100%', height: '100%', border: 0 }}
-                  />
-                  <MapRouteOverlay spots={selectedCourse.spots} />
+                  {Platform.OS === 'web' ? (
+                    /* 🌐 웹일 때는 구글 맵과 기존 오버레이를 보여줌 */
+                    (() => {
+                      const firstSpot = selectedCourse.spots.find(s => s.name);
+                      const query = encodeURIComponent(firstSpot ? firstSpot.name : '잠실야구장');
+
+                      return (
+                        <View style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+                          <iframe
+                            title="web-map"
+                            src={`https://maps.google.com/maps?q=${query}&z=14&output=embed`}
+                            style={{ width: '100%', height: '100%', border: 0 }}
+                          />
+                        </View>
+                      );
+                    })()
+                  ) : (
+                    /* 📱 앱일 때는 네이버 지도를 띄움 */
+                    <NaverMapView
+                      style={{ flex: 1 }}
+                      camera={{
+                        latitude: Number(selectedCourse.spots.find(s => s.map_x && s.map_y)?.map_y) || 37.5665,
+                        longitude: Number(selectedCourse.spots.find(s => s.map_x && s.map_y)?.map_x) || 126.9780,
+                        zoom: 13,
+                      }}
+                    >
+                      {selectedCourse.spots
+                        .filter((spot) => spot.map_x != null && spot.map_y != null && spot.map_x !== '' && spot.map_y !== '')
+                        .map((spot, idx) => (
+                        <Marker
+                          key={`marker-${spot.id}-${idx}`}
+                          coordinate={{ 
+                            latitude: Number(spot.map_y), 
+                            longitude: Number(spot.map_x) 
+                          }}
+                          caption={{ text: `${idx + 1}. ${spot.name}` }}
+                          pinColor="#5B44E8"
+                        />
+                      ))}
+                    </NaverMapView>
+                  )}
                 </View>
 
                 {/* 하단 타임라인 바텀시트 */}
@@ -1900,17 +1971,6 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
 
                           {/* 카테고리에 따라 갤러리 렌더링 */}
                           {(spot.category.includes('음식') || spot.category.includes('맛집') || spot.category.includes('카페') || spot.category.includes('관광') || spot.category.includes('쇼핑')) && renderSpotImages(spot)}
-
-                          {/* 이동 수단 가이드 */}
-                          {idx < arr.length - 1 && (
-                            <View style={styles.moveInfoBoxClear}>
-                              <Text style={styles.moveInfoTextBold}>
-                                {transport.includes('자차') ? '🚗' : transport.includes('대중교통') ? '🚌' : '🚶'} 다음 장소까지 {
-                                  spot.moveText || (transport.includes('자차') ? '차량 약 10분' : transport.includes('대중교통') ? '대중교통 약 20분' : '도보 약 15분')
-                                }
-                              </Text>
-                            </View>
-                          )}
                         </View>
                       </View>
                     ))}
@@ -1927,7 +1987,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
             )}
 
             {/* 피드백 리뷰 */}
-            {flow === 'feedbackReview' && (
+            {flow === 'feedbackReview' && selectedCourse && (
               <View style={styles.flex1}>
                 <View style={styles.header}>
                   <TouchableOpacity onPress={() => setFlow('home')} style={styles.backBtn}><ArrowLeft size={18} color="#0F0E1A" /><Text style={styles.backText}>뒤로</Text></TouchableOpacity>
@@ -2017,48 +2077,153 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
         {/* ========================================================= */}
         {tab === 'course' && (
           <View style={styles.flex1}>
-            {activeTrip ? (
+            {selectedCourse ? (
+              // 🗺️ [상세 뷰] 목록에서 특정 코스를 터치했을 때 보여지는 지도 화면
               <View style={[styles.flex1, { backgroundColor: '#F8FAFC' }]}>
                 <View style={styles.detailTopHeader}>
-                  <TouchableOpacity onPress={() => { setTab('home'); setFlow('home'); }} style={{ padding: 8 }}><ArrowLeft size={24} color="#111827" /></TouchableOpacity>
+                  <TouchableOpacity onPress={() => setSelectedCourse(null)} style={{ padding: 8 }}>
+                    <ArrowLeft size={24} color="#111827" />
+                  </TouchableOpacity>
                   <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#111827' }}>여행 지도</Text>
-                  <View style={styles.greenNavTag}><View style={styles.greenDot} /><Text style={{ fontSize: 10, color: '#059669', fontWeight: 'bold' }}>경로 안내 중</Text></View>
+                  <View style={styles.greenNavTag}>
+                    <View style={styles.greenDot} />
+                    <Text style={{ fontSize: 10, color: '#059669', fontWeight: 'bold' }}>경로 안내 중</Text>
+                  </View>
                 </View>
+
                 <View style={styles.detailMapArea}>
-                  <iframe title="active-course-map" src={`https://maps.google.com/maps?q=${Number(selectedCourse.spots[0]?.map_y) || 37.5121513},${Number(selectedCourse.spots[0]?.map_x) || 127.0719095}&z=14&output=embed`} style={{ width: '100%', height: '100%', border: 0 }} />
-                  <MapRouteOverlay spots={selectedCourse.spots} />
+                  {Platform.OS === 'web' ? (
+                    /* 🌐 웹일 때는 구글 맵에 첫 번째 장소명을 검색어로 전달하여 핀이 정확히 꽂히게 합니다 */
+                    (() => {
+                      const firstSpot = selectedCourse.spots.find(s => s.name);
+                      const query = encodeURIComponent(firstSpot ? firstSpot.name : '잠실야구장');
+
+                      return (
+                        <View style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+                          <iframe
+                            title="web-map"
+                            src={`https://maps.google.com/maps?q=${query}&z=14&output=embed`}
+                            style={{ width: '100%', height: '100%', border: 0 }}
+                          />
+                        </View>
+                      );
+                    })()
+                  ) : (
+                    /* 📱 앱일 때는 네이버 지도를 띄움 */
+                    <NaverMapView
+                      style={{ flex: 1 }}
+                      camera={{
+                        latitude: Number(selectedCourse.spots.find(s => s.map_x && s.map_y)?.map_y) || 37.5665,
+                        longitude: Number(selectedCourse.spots.find(s => s.map_x && s.map_y)?.map_x) || 126.9780,
+                        zoom: 13,
+                      }}
+                    >
+                      {selectedCourse.spots
+                        .filter((spot) => spot.map_x != null && spot.map_y != null && spot.map_x !== '' && spot.map_y !== '')
+                        .map((spot, idx) => (
+                        <Marker
+                          key={`marker-${spot.id}-${idx}`}
+                          coordinate={{ 
+                            latitude: Number(spot.map_y), 
+                            longitude: Number(spot.map_x) 
+                          }}
+                          caption={{ text: `${idx + 1}. ${spot.name}` }}
+                          pinColor="#5B44E8"
+                        />
+                      ))}
+                    </NaverMapView>
+                  )}
                 </View>
+
                 <View style={[styles.detailTimelineSheet, styles.activeCourseTimelineSheet]}>
                   <View style={styles.modalDragHandle} />
                   <Text style={styles.bottomSheetTitleCenter}>날짜별 동선을 지도에서 확인</Text>
                   <ScrollView style={styles.flex1} contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
                     {selectedCourse.spots.map((spot, idx, arr) => (
                       <View key={`active-timeline-${idx}`} style={styles.timelineItemRow}>
-                        <View style={styles.timelineLeftCol}><View style={styles.timelineOrangePin}><Text style={styles.timelinePinTextWhite}>{idx + 1}</Text></View>{idx < arr.length - 1 && <View style={styles.timelineVerticalLineSolid} />}</View>
+                        <View style={styles.timelineLeftCol}>
+                          <View style={styles.timelineOrangePin}><Text style={styles.timelinePinTextWhite}>{idx + 1}</Text></View>
+                          {idx < arr.length - 1 && <View style={styles.timelineVerticalLineSolid} />}
+                        </View>
                         <View style={styles.timelineContentColNew}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}><Text style={styles.categoryTextGreyNew}>{spot.category || '장소'}</Text><Text style={styles.timelineItemTitleLargeNew}>{spot.name}</Text></View>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <Text style={styles.categoryTextGreyNew}>{spot.category || '장소'}</Text>
+                            <Text style={styles.timelineItemTitleLargeNew}>{spot.name}</Text>
+                          </View>
                           <Text style={styles.timelineItemDescGreyNew}>추천 테마: {spot.category}</Text>
-                          {(spot.category.includes('음식') || spot.category.includes('맛집') || spot.category.includes('카페') || spot.category.includes('관광') || spot.category.includes('쇼핑')) && renderSpotImages(spot)}
-                          {idx < arr.length - 1 && <View style={styles.moveInfoBoxClear}><Text style={styles.moveInfoTextBold}>{transport.includes('자차') ? '🚗' : transport.includes('대중교통') ? '🚌' : '🚶'} 다음 장소까지 {spot.moveText || (transport.includes('자차') ? '차량 약 10분' : transport.includes('대중교통') ? '대중교통 약 20분' : '도보 약 15분')}</Text></View>}
+                          {renderSpotImages(spot)}
                         </View>
                       </View>
                     ))}
                   </ScrollView>
-                  <View style={styles.detailFixedFooter}><TouchableOpacity style={styles.purpleBtn} onPress={handleCompleteActiveTrip} disabled={isSubmitting}>{isSubmitting ? <ActivityIndicator color="#FFF" /> : <Text style={styles.purpleBtnText}>코스 완료</Text>}</TouchableOpacity></View>
+                  <View style={styles.detailFixedFooter}>
+                    <TouchableOpacity style={styles.purpleBtn} onPress={() => {
+                      const activeT = activeTripList.find(t => t.course === selectedCourse) || activeTripList[0];
+                      if (activeT) setCurrentTripId(activeT.id);
+                      setTab('home');
+                      setFlow('feedbackReview');
+                    }}>
+                      <Text style={styles.purpleBtnText}>코스 완료</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               </View>
             ) : (
+              // 📋 [목록 뷰] 저장된 코스들을 빠른 경기 날짜 순으로 정렬하여 표시
               <>
                 <View style={styles.header}>
-                  <Text style={styles.headerSub}>내 코스</Text>
-                  <Text style={styles.headerDesc}>확정한 코스는 완주하거나 24시간이 지나면 사라져요.</Text>
+                  <Text style={styles.headerSub}>저장된 코스</Text>
+                  <Text style={styles.headerDesc}>경기 날짜가 지나면 자동으로 보관함으로 이동해요.</Text>
                 </View>
                 <ScrollView style={styles.flex1} contentContainerStyle={{ padding: 20, gap: 14 }}>
-                <View style={styles.emptyCoursePanel}>
-                  <Text style={{ fontSize: 38 }}>🗺️</Text>
-                  <Text style={styles.emptyCourseTitle}>아직 코스를 생성하지 않았어요!</Text>
-                  <Text style={styles.emptyCourseText}>홈에서 경기를 선택하고 나만의 여행 코스를 만들어보세요.</Text>
-                </View>
+                  {activeTripList.length === 0 ? (
+                    <View style={styles.emptyCoursePanel}>
+                      <Text style={{ fontSize: 38 }}>🗺️</Text>
+                      <Text style={styles.emptyCourseTitle}>저장된 코스가 없어요!</Text>
+                      <Text style={styles.emptyCourseText}>홈에서 경기를 선택하고 여행 코스를 확정해보세요.</Text>
+                    </View>
+                  ) : (
+                    activeTripList.map((trip) => {
+                      const tripCourse = trip.course as Course;
+                      return (
+                        <TouchableOpacity
+                          key={trip.id}
+                          style={styles.gameCard}
+                          onPress={() => {
+                            setSelectedCourse(tripCourse);
+                            setCurrentTripId(trip.id);
+                          }}
+                        >
+                          <View style={styles.rowBetween}>
+                            <View style={[styles.sportBadge, { backgroundColor: '#EEF2FF' }]}>
+                              <Text style={[styles.sportBadgeText, { color: '#5B44E8' }]}>
+                                📅 {trip.tripDate ? dateLabel(trip.tripDate) : '경기 예정'}
+                              </Text>
+                            </View>
+                            <Text style={{ fontSize: 12, fontWeight: 'bold', color: '#10B981' }}>진행 가능</Text>
+                          </View>
+                          <View style={{ marginVertical: 10 }}>
+                            <Text style={{ fontSize: 16, fontWeight: '900', color: '#111827' }}>
+                              {trip.matchName || trip.stadium}
+                            </Text>
+                            <Text style={{ fontSize: 13, color: '#5B44E8', fontWeight: 'bold', marginTop: 4 }}>
+                              {trip.courseTitle || tripCourse?.title || '추천 코스'}
+                            </Text>
+                            <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 4 }}>
+                              {tripCourse?.routeText || ''}
+                            </Text>
+                          </View>
+                          <View style={styles.rowBetween}>
+                            <Text style={{ fontSize: 11, color: '#9CA3AF' }}>📍 {trip.stadium}</Text>
+                            <View style={styles.rowCenter}>
+                              <Text style={{ fontSize: 12, fontWeight: 'bold', color: '#5B44E8' }}>동선 확인하기</Text>
+                              <ChevronRight size={14} color="#5B44E8" />
+                            </View>
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    })
+                  )}
                 </ScrollView>
               </>
             )}
@@ -2174,7 +2339,43 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
       </Modal>
 
       <Modal visible={selectedHistoryTrip !== null} transparent animationType="fade" onRequestClose={() => setSelectedHistoryTrip(null)}>
-        <View style={styles.modalOverlay}><TouchableOpacity style={styles.modalBackdropTouch} activeOpacity={1} onPress={() => setSelectedHistoryTrip(null)} /><View style={styles.historyDetailModal}><Text style={styles.modalTitle}>{selectedHistoryTrip?.courseTitle ?? '완료한 여행 코스'}</Text><Text style={styles.historyCourseRoute}>{selectedHistoryTrip?.stadium}{selectedHistoryTrip?.matchName ? ` · ${selectedHistoryTrip.matchName}` : ''}</Text><Text style={styles.historyDetailDate}>{selectedHistoryTrip?.tripDate ?? (selectedHistoryTrip ? new Date(selectedHistoryTrip.createdAt).toLocaleDateString() : '')} · 평점 {selectedHistoryTrip?.rating ?? '-'}</Text>{selectedHistoryCourse && <><Text style={styles.historyDetailSectionTitle}>여행 요약</Text><Text style={styles.historyDetailSummary}>{selectedHistoryCourse.description || '내가 확정하고 완주한 여행 코스예요.'}</Text><Text style={styles.historyDetailSectionTitle}>방문 경로</Text><Text style={styles.historyDetailRoute}>{selectedHistoryCourse.routeText || selectedHistoryCourse.spots?.map((spot) => spot.name).join(' ➔ ')}</Text></>}<View style={styles.modalButtonRow}><TouchableOpacity style={styles.modalCancelBtn} onPress={() => setSelectedHistoryTrip(null)}><Text style={styles.modalCancelText}>닫기</Text></TouchableOpacity><TouchableOpacity style={styles.historyDeleteBtn} onPress={() => selectedHistoryTrip && handleDeleteTrip(selectedHistoryTrip)}><Text style={styles.historyDeleteText}>기록 삭제</Text></TouchableOpacity></View></View></View>
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity style={styles.modalBackdropTouch} activeOpacity={1} onPress={() => setSelectedHistoryTrip(null)} />
+          <View style={[styles.historyDetailModal, { maxHeight: '80%' }]}>
+            <Text style={styles.modalTitle}>{selectedHistoryTrip?.courseTitle ?? '완료한 여행 코스'}</Text>
+            <Text style={styles.historyCourseRoute}>{selectedHistoryTrip?.stadium}{selectedHistoryTrip?.matchName ? ` · ${selectedHistoryTrip.matchName}` : ''}</Text>
+            <Text style={styles.historyDetailDate}>{selectedHistoryTrip?.tripDate ?? (selectedHistoryTrip ? new Date(selectedHistoryTrip.createdAt).toLocaleDateString() : '')} · 평점 {selectedHistoryTrip?.rating ?? '-'}</Text>
+            
+            {/* 💡 방문한 여행지(스팟) 목록을 보여주는 영역 추가 */}
+            <ScrollView style={{ marginVertical: 12 }} showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+              <Text style={styles.historyDetailSectionTitle}>방문한 여행지 코스</Text>
+              {selectedHistoryCourse && selectedHistoryCourse.spots && selectedHistoryCourse.spots.length > 0 ? (
+                selectedHistoryCourse.spots.map((spot, index) => (
+                  <View key={`history-spot-${spot.id || index}`} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8FAFC', padding: 10, borderRadius: 12, borderWidth: 1, borderColor: '#F1F5F9', gap: 10 }}>
+                    <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#EEF2FF', justifyContent: 'center', alignItems: 'center' }}>
+                      <Text style={{ fontSize: 12, fontWeight: '900', color: '#5B44E8' }}>{index + 1}</Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 13, fontWeight: '800', color: '#111827' }}>{spot.name}</Text>
+                      <Text style={{ fontSize: 11, color: '#6B7280', marginTop: 1 }}>{spot.category || '장소'}</Text>
+                    </View>
+                  </View>
+                ))
+              ) : (
+                <Text style={{ fontSize: 12, color: '#9CA3AF', paddingVertical: 8 }}>저장된 상세 장소 정보가 없습니다.</Text>
+              )}
+            </ScrollView>
+
+            <View style={styles.modalButtonRow}>
+              <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setSelectedHistoryTrip(null)}>
+                <Text style={styles.modalCancelText}>닫기</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.historyDeleteBtn} onPress={() => selectedHistoryTrip && handleDeleteTrip(selectedHistoryTrip)}>
+                <Text style={styles.historyDeleteText}>기록 삭제</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
       </Modal>
 
       <Modal visible={deleteTripPrompt !== null} transparent animationType="fade" onRequestClose={() => !isSubmitting && setDeleteTripPrompt(null)}>
@@ -2245,6 +2446,27 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
         </View>
       </Modal>
 
+      {/* 💡 [추가] 동일 경기 코스 재생성 확인 팝업 모달 */}
+      <Modal visible={duplicateCoursePromptOpen} transparent animationType="fade" onRequestClose={() => setDuplicateCoursePromptOpen(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.activeTripPrompt}>
+            <View style={styles.activeTripPromptIcon}><Text style={{ fontSize: 24 }}>🔄</Text></View>
+            <Text style={styles.activeTripPromptTitle}>코스를 다시 생성하시겠습니까?</Text>
+            <Text style={styles.activeTripPromptText}>
+              해당 경기에 이미 생성된 코스가 있습니다.{`\n`}새로운 조건으로 코스를 다시 만드시겠습니까?
+            </Text>
+            <View style={styles.modalButtonRow}>
+              <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setDuplicateCoursePromptOpen(false)}>
+                <Text style={styles.modalCancelText}>취소</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.modalSaveBtn} onPress={handleConfirmRecreateCourse}>
+                <Text style={styles.purpleBtnText}>다시 생성</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* 하단 네비게이션 탭 바 */}
       <View style={styles.bottomTabBar}>
         {[
@@ -2257,6 +2479,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
             style={styles.tabItem}
             onPress={() => {
               setTab(id as TabType);
+              if (id === 'course') setSelectedCourse(null); // 💡 코스 탭 누를 시 선택된 코스 해제
               if (id === 'my') setMyPageSection('menu');
               setFlow('home');
             }}
@@ -2759,9 +2982,6 @@ const styles = StyleSheet.create({
   timelineItemTitleLargeNew: { fontSize: 16, fontWeight: '900', color: '#111827' },
   timelineItemDescGreyNew: { fontSize: 12, color: '#9CA3AF', marginTop: 4 },
   
-  moveInfoBoxClear: { marginTop: 16, padding: 14, backgroundColor: '#F8FAFC', borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0' },
-  moveInfoTextBold: { fontSize: 13, color: '#4B5563', fontWeight: '700' },
   detailFixedFooter: { padding: 16, backgroundColor: '#FFF', borderTopWidth: 1, borderTopColor: '#F1F5F9', gap: 8 },
   bookmarkOutlineBtnNew: { height: 48, borderRadius: 24, borderWidth: 1.5, borderColor: '#5B44E8', backgroundColor: '#FFF', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 6 },
 });
-
