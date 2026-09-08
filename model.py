@@ -145,8 +145,9 @@ def build_user_vec(survey: dict) -> dict:
             for cat in EXCLUDE_CATEGORY_MAP.get(ex, [])
         ],
         "concept":      concept,
-        "stadium_lat":  survey.get("stadium_lat"),   # 경기장 위도 (recommend.py에서 주입)
-        "stadium_lng":  survey.get("stadium_lng"),   # 경기장 경도 (recommend.py에서 주입)
+        "stadium_lat":      survey.get("stadium_lat"),       # 경기장 위도
+        "stadium_lng":      survey.get("stadium_lng"),       # 경기장 경도
+        "selected_api_name": survey.get("selected_api_name", ""),  # TourAPI 실제 장소명
     }
 
     return {
@@ -345,9 +346,10 @@ def spot_overlap(course1, course2):
 
 def mmr_courses(user_result, candidates, k=3, n=5):
     """서로 다른 대안 코스 k개 생성"""
-    user_vec = user_result["vector"]
-    meta     = user_result["meta"]
-    ratio    = meta["ratio"]
+    user_vec   = user_result["vector"]
+    meta       = user_result["meta"]
+    ratio      = meta["ratio"]
+    fixed_pins = meta["fixed_pins"]
 
     total    = sum(ratio.values())
     food_n   = round(n * ratio.get("맛집",   0) / total)
@@ -375,45 +377,74 @@ def mmr_courses(user_result, candidates, k=3, n=5):
         scored.sort(key=lambda x: x[0], reverse=True)
         return [s for _, s in scored[:k]]
 
+    def add_fixed_pins(course, f_pool, t_pool, nat_pool, s_pool):
+        """고정핀을 코스에 먼저 추가하고 해당 풀에서 제거"""
+        for pin_name in fixed_pins:
+            for pool in [f_pool, t_pool, nat_pool, s_pool, candidates]:
+                pin = next((s for s in pool if pin_name in s["spot_name"]), None)
+                if pin and pin not in course:
+                    course.append(pin)
+                    for p in [f_pool, t_pool, nat_pool, s_pool]:
+                        if pin in p:
+                            p.remove(pin)
+                    break
+        return course
+
     courses         = []
     used_food_names = set()
     used_tour_names = set()
     used_nat_names  = set()
 
     for c_idx in range(k):
+        # 각 코스마다 풀 복사 (고정핀 제거 반영을 위해)
+        f_pool   = list(food_pool)
+        t_pool   = list(tour_pool)
+        nat_pool = list(nature_pool)
+        s_pool   = list(shop_pool)
+
         course = []
 
+        # 고정핀 먼저 추가
+        course = add_fixed_pins(course, f_pool, t_pool, nat_pool, s_pool)
+
+        # 고정핀 카테고리 차감
+        pin_names    = {s["spot_name"] for s in course}
+        cur_food_n   = food_n   - sum(1 for s in course if s["mcls_nm"] in RATIO_CATEGORY_MAP["맛집"])
+        cur_tour_n   = tour_n   - sum(1 for s in course if s["mcls_nm"] in RATIO_CATEGORY_MAP["관광지"])
+        cur_nature_n = nature_n - sum(1 for s in course if s["mcls_nm"] in RATIO_CATEGORY_MAP["자연"])
+        cur_shop_n   = shop_n   - sum(1 for s in course if s["mcls_nm"] in RATIO_CATEGORY_MAP["쇼핑"])
+
+        # 음식
         food_picked = pick_best(
-            food_pool, course, food_n,
-            exclude=used_food_names if c_idx > 0 else set()
+            f_pool, course, cur_food_n,
+            exclude=used_food_names | pin_names if c_idx > 0 else pin_names
         )
-        if len(food_picked) < food_n:
-            food_picked = pick_best(food_pool, course, food_n)
+        if len(food_picked) < cur_food_n:
+            food_picked = pick_best(f_pool, course, cur_food_n, exclude=pin_names)
         course.extend(food_picked)
         used_food_names.update(s["spot_name"] for s in food_picked)
 
-        tour_picked = pick_best(tour_pool, course, tour_n, exclude=used_tour_names)
-        if len(tour_picked) < tour_n:
-            tour_picked = pick_best(
-                tour_pool, course, tour_n,
-                exclude=set(s["spot_name"] for s in course)
-            )
+        # 관광지
+        used_now    = {s["spot_name"] for s in course}
+        tour_picked = pick_best(t_pool, course, cur_tour_n, exclude=used_tour_names | used_now)
+        if len(tour_picked) < cur_tour_n:
+            tour_picked = pick_best(t_pool, course, cur_tour_n, exclude=used_now)
         course.extend(tour_picked)
         used_tour_names.update(s["spot_name"] for s in tour_picked)
 
-        nat_picked = pick_best(nature_pool, course, nature_n, exclude=used_nat_names)
-        if len(nat_picked) < nature_n:
-            nat_picked = pick_best(
-                nature_pool, course, nature_n,
-                exclude=set(s["spot_name"] for s in course)
-            )
+        # 자연
+        used_now   = {s["spot_name"] for s in course}
+        nat_picked = pick_best(nat_pool, course, cur_nature_n, exclude=used_nat_names | used_now)
+        if len(nat_picked) < cur_nature_n:
+            nat_picked = pick_best(nat_pool, course, cur_nature_n, exclude=used_now)
         course.extend(nat_picked)
         used_nat_names.update(s["spot_name"] for s in nat_picked)
 
-        used_now    = set(s["spot_name"] for s in course)
-        shop_picked = pick_best(shop_pool, course, shop_n, exclude=used_now)
-        if len(shop_picked) < shop_n:
-            shop_picked = pick_best(shop_pool, course, shop_n)
+        # 쇼핑
+        used_now    = {s["spot_name"] for s in course}
+        shop_picked = pick_best(s_pool, course, cur_shop_n, exclude=used_now)
+        if len(shop_picked) < cur_shop_n:
+            shop_picked = pick_best(s_pool, course, cur_shop_n)
         course.extend(shop_picked)
 
         courses.append(course[:n])

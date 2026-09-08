@@ -11,8 +11,7 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 from model import (
     build_user_vec, build_spot_vec, build_region_vec,
-    filter_candidates, build_course,
-    mmr_courses, generate_summary, apply_feedback,
+    filter_candidates, mmr_courses, generate_summary, apply_feedback,
 )
 from constants import TAR_SVC_CODES, CUL_RES_CODES
 
@@ -25,115 +24,108 @@ API_KEY     = os.getenv("API_KEY")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8080")
 
 # ── 경기장 → 지역코드 매핑 ───────────────────
-# regions 리스트 기준으로 구단/경기장명과 지역코드 매핑
 STADIUM_TO_REGION = {
 
     # ── 서울 ──────────────────────────────────
-    "서울종합운동장야구장":         {"areaCd": "11", "signguCd": "11710", "city": "서울 송파",   "lat": 37.5121513808403,  "lng": 127.071909507224},
-    "서울특별시교육청학생체육관":   {"areaCd": "11", "signguCd": "11710", "city": "서울 송파",   "lat": 37.51219787219792, "lng": 127.07537857414752},
-    "잠실학생체육관":               {"areaCd": "11", "signguCd": "11710", "city": "서울 송파",   "lat": 37.51219787219792, "lng": 127.07537857414752},
-    "고척스카이돔":                 {"areaCd": "11", "signguCd": "11530", "city": "서울 구로",   "lat": 37.49821220764421, "lng": 126.8670889679075},
-    "장충체육관":                   {"areaCd": "11", "signguCd": "11140", "city": "서울 중구",   "lat": 37.558178171371,   "lng": 127.006808757736},
-    "서울월드컵경기장":             {"areaCd": "11", "signguCd": "11440", "city": "서울 마포",   "lat": 37.56825003712418, "lng": 126.89724365713197},
-    "목동운동장 주경기장":             {"areaCd": "11", "signguCd": "11470", "city": "서울 양천",   "lat": 37.5304813965458,    "lng": 126.883040410551},
+    "서울종합운동장야구장":         {"areaCd": "11", "signguCd": "11710", "city": "서울 송파",    "lat": 37.5121513808403,   "lng": 127.071909507224,  "api_name": "잠실야구장"},
+    "서울특별시교육청학생체육관":   {"areaCd": "11", "signguCd": "11710", "city": "서울 송파",    "lat": 37.51219787219792,  "lng": 127.07537857414752},
+    "고척스카이돔":                 {"areaCd": "11", "signguCd": "11530", "city": "서울 구로",    "lat": 37.49821220764421,  "lng": 126.8670889679075, "api_name": "고척스카이돔"},
+    "장충체육관":                   {"areaCd": "11", "signguCd": "11140", "city": "서울 중구",    "lat": 37.558178171371,    "lng": 127.006808757736},
+    "서울월드컵경기장":             {"areaCd": "11", "signguCd": "11440", "city": "서울 마포",    "lat": 37.56825003712418,  "lng": 126.89724365713197, "api_name": "서울월드컵경기장"},
+    "목동운동장 주경기장":          {"areaCd": "11", "signguCd": "11470", "city": "서울 양천",    "lat": 37.5304813965458,   "lng": 126.883040410551,  "api_name": "목동주경기장"},
 
     # ── 인천 ──────────────────────────────────
-    "인천SSG랜더스필드":            {"areaCd": "28", "signguCd": "28177", "city": "인천 미추홀", "lat": 37.436998685442084,"lng": 126.69327612453377},
-    "인천삼산월드체육관":           {"areaCd": "28", "signguCd": "28237", "city": "인천 부평",   "lat": 37.50800280504626, "lng": 126.73832589829678},
-    "계양체육관":                   {"areaCd": "28", "signguCd": "28245", "city": "인천 계양",   "lat": 37.5339610690414,  "lng": 126.748058093851},
-    "인천축구전용경기장":           {"areaCd": "28", "signguCd": "28110", "city": "인천 중구",   "lat": 37.466162868183204,"lng": 126.64300764788254},
-    "인천도원체육관":               {"areaCd": "28", "signguCd": "28110", "city": "인천 중구",   "lat": 37.4662778536466,  "lng": 126.640813029151},
+    "인천SSG랜더스필드":            {"areaCd": "28", "signguCd": "28177", "city": "인천 미추홀",  "lat": 37.436998685442084, "lng": 126.69327612453377, "api_name": "인천문학경기장/동문광장"},
+    "인천삼산월드체육관":           {"areaCd": "28", "signguCd": "28237", "city": "인천 부평",    "lat": 37.50800280504626,  "lng": 126.73832589829678, "api_name": "삼산월드체육관/축구장"},
+    "계양체육관":                   {"areaCd": "28", "signguCd": "28245", "city": "인천 계양",    "lat": 37.5339610690414,   "lng": 126.748058093851},
+    "인천축구전용경기장":           {"areaCd": "28", "signguCd": "28110", "city": "인천 중구",    "lat": 37.466162868183204, "lng": 126.64300764788254},
+    "인천도원체육관":               {"areaCd": "28", "signguCd": "28110", "city": "인천 중구",    "lat": 37.4662778536466,   "lng": 126.640813029151},
 
     # ── 경기도 ────────────────────────────────
-    "수원KT위즈파크":               {"areaCd": "41", "signguCd": "41111", "city": "수원 장안",   "lat": 37.2997302532973,  "lng": 127.009772045935},
-    "수원실내체육관":               {"areaCd": "41", "signguCd": "41111", "city": "수원 장안",   "lat": 37.2983643371609,  "lng": 127.009072589574},
-    "수원종합운동장 주경기장":               {"areaCd": "41", "signguCd": "41111", "city": "수원 장안",   "lat": 37.297755038633156,    "lng": 127.01136094698745},
-    "화성실내체육관":               {"areaCd": "41", "signguCd": "41590", "city": "화성 만세",   "lat": 37.13830760228957, "lng": 126.92247625610617},
-    "이충문화체육센터":             {"areaCd": "41", "signguCd": "41150", "city": "평택",         "lat": 37.06601927536289, "lng": 127.07072607979842},
-    "부천종합운동장":               {"areaCd": "41", "signguCd": "41192", "city": "부천 원미",   "lat": 37.50254894022013, "lng": 126.79901040032861},
-    "부천체육관":                   {"areaCd": "41", "signguCd": "41192", "city": "부천 원미",   "lat": 37.513420835860586,"lng": 126.7632385988074},
-    "부천실내체육관":               {"areaCd": "41", "signguCd": "41192", "city": "부천 원미",   "lat": 37.513420835860586,"lng": 126.7632385988074},
-    "안양종합운동장":               {"areaCd": "41", "signguCd": "41173", "city": "안양 동안",   "lat": 37.405329029129256,"lng": 126.94651386558405},
-    "안양정관장아레나":             {"areaCd": "41", "signguCd": "41173", "city": "안양 동안",   "lat": 37.4050523816749,  "lng": 126.948465782089},
-    "고양소노아레나":               {"areaCd": "41", "signguCd": "41287", "city": "고양 일산서", "lat": 37.6745773792369,  "lng": 126.741820500325},
-    "수원KT소닉붐아레나":           {"areaCd": "41", "signguCd": "41113", "city": "수원 권선",   "lat": 37.276272539357,   "lng": 126.948290984046},
-    "용인실내체육관":               {"areaCd": "41", "signguCd": "41461", "city": "용인 처인",   "lat": 37.23740975113005, "lng": 127.21341259333057},
-    "용인미르스타디움":               {"areaCd": "41", "signguCd": "41461", "city": "용인 처인",   "lat": 37.24968677953305,    "lng": 127.16532948766518},
-    "김포솔터축구장":               {"areaCd": "41", "signguCd": "41570", "city": "김포",   "lat": 37.6408457983481,    "lng": 126.649967481082},
-    "탄천종합운동장 주경기장":               {"areaCd": "41", "signguCd": "41135", "city": "성남 분당",   "lat": 37.4104126665704,  "lng": 127.120662823288},
-    "수원월드컵경기장":               {"areaCd": "41", "signguCd": "41115", "city": "수원 팔달",   "lat": 37.2864976648853, "lng": 127.036920677186},
-    "안산와~스타디움":               {"areaCd": "41", "signguCd": "41273", "city": "안산 단원",   "lat": 37.31934057443121, "lng": 126.81864453861768},
-    "파주스타디움":               {"areaCd": "41", "signguCd": "41480", "city": "파주",   "lat": 37.7561525640414,  "lng": 126.785603115115},
-    "화성종합경기타운 주경기장":               {"areaCd": "41", "signguCd": "41590", "city": "화성",   "lat": 37.137448439984546,   "lng": 126.9245705199317},
+    "수원KT위즈파크":               {"areaCd": "41", "signguCd": "41111", "city": "수원 장안",    "lat": 37.2997302532973,   "lng": 127.009772045935},
+    "수원실내체육관":               {"areaCd": "41", "signguCd": "41111", "city": "수원 장안",    "lat": 37.2983643371609,   "lng": 127.009072589574},
+    "수원종합운동장 주경기장":      {"areaCd": "41", "signguCd": "41111", "city": "수원 장안",    "lat": 37.297755038633156, "lng": 127.01136094698745, "api_name": "수원종합운동장/인조잔디구장"},
+    "화성실내체육관":               {"areaCd": "41", "signguCd": "41590", "city": "화성 만세",    "lat": 37.13830760228957,  "lng": 126.92247625610617},
+    "이충문화체육센터":             {"areaCd": "41", "signguCd": "41150", "city": "평택",          "lat": 37.06601927536289,  "lng": 127.07072607979842},
+    "부천종합운동장":               {"areaCd": "41", "signguCd": "41192", "city": "부천 원미",    "lat": 37.50254894022013,  "lng": 126.79901040032861},
+    "부천체육관":                   {"areaCd": "41", "signguCd": "41192", "city": "부천 원미",    "lat": 37.513420835860586, "lng": 126.7632385988074},
+    "안양종합운동장":               {"areaCd": "41", "signguCd": "41173", "city": "안양 동안",    "lat": 37.405329029129256, "lng": 126.94651386558405},
+    "안양정관장아레나":             {"areaCd": "41", "signguCd": "41173", "city": "안양 동안",    "lat": 37.4050523816749,   "lng": 126.948465782089},
+    "고양소노아레나":               {"areaCd": "41", "signguCd": "41287", "city": "고양 일산서",  "lat": 37.6745773792369,   "lng": 126.741820500325,  "api_name": "고양종합운동장/보조경기장"},
+    "수원KT소닉붐아레나":           {"areaCd": "41", "signguCd": "41113", "city": "수원 권선",    "lat": 37.276272539357,    "lng": 126.948290984046},
+    "용인실내체육관":               {"areaCd": "41", "signguCd": "41461", "city": "용인 처인",    "lat": 37.23740975113005,  "lng": 127.21341259333057},
+    "용인미르스타디움":             {"areaCd": "41", "signguCd": "41461", "city": "용인 처인",    "lat": 37.24968677953305,  "lng": 127.16532948766518},
+    "김포솔터축구장":               {"areaCd": "41", "signguCd": "41570", "city": "김포",          "lat": 37.6408457983481,   "lng": 126.649967481082,  "api_name": "김포솔터축구장"},
+    "탄천종합운동장 주경기장":      {"areaCd": "41", "signguCd": "41135", "city": "성남 분당",    "lat": 37.4104126665704,   "lng": 127.120662823288},
+    "수원월드컵경기장":             {"areaCd": "41", "signguCd": "41115", "city": "수원 팔달",    "lat": 37.2864976648853,   "lng": 127.036920677186,  "api_name": "수원월드컵경기장"},
+    "안산와~스타디움":              {"areaCd": "41", "signguCd": "41273", "city": "안산 단원",    "lat": 37.31934057443121,  "lng": 126.81864453861768},
+    "파주스타디움":                 {"areaCd": "41", "signguCd": "41480", "city": "파주",          "lat": 37.7561525640414,   "lng": 126.785603115115},
+    "화성종합경기타운 주경기장":    {"areaCd": "41", "signguCd": "41590", "city": "화성",          "lat": 37.137448439984546, "lng": 126.9245705199317},
 
     # ── 대전 ──────────────────────────────────
-    "대전한화생명볼파크":           {"areaCd": "30", "signguCd": "30140", "city": "대전 중구",   "lat": 36.3161617310226,  "lng": 127.431535001435},
-    "한화생명이글스파크":           {"areaCd": "30", "signguCd": "30140", "city": "대전 중구",   "lat": 36.3161617310226,  "lng": 127.431535001435},
-    "충무체육관":                   {"areaCd": "30", "signguCd": "30140", "city": "대전 중구",   "lat": 36.3180130202897,  "lng": 127.430460586297},
-    "대전충무체육관":               {"areaCd": "30", "signguCd": "30140", "city": "대전 중구",   "lat": 36.3180130202897,  "lng": 127.430460586297},
-    "대전월드컵경기장":             {"areaCd": "30", "signguCd": "30200", "city": "대전 유성",   "lat": 36.365171091983576,"lng": 127.32513866896132},
+    "대전한화생명볼파크":           {"areaCd": "30", "signguCd": "30140", "city": "대전 중구",    "lat": 36.3161617310226,   "lng": 127.431535001435,  "api_name": "대전한화생명볼파크"},
+    "충무체육관":                   {"areaCd": "30", "signguCd": "30140", "city": "대전 중구",    "lat": 36.3180130202897,   "lng": 127.430460586297},
+    "대전월드컵경기장":             {"areaCd": "30", "signguCd": "30200", "city": "대전 유성",    "lat": 36.365171091983576, "lng": 127.32513866896132, "api_name": "대전월드컵경기장"},
 
     # ── 광주 ──────────────────────────────────
-    "광주기아챔피언스필드":         {"areaCd": "29", "signguCd": "29170", "city": "광주 북구",   "lat": 35.16820922209541, "lng": 126.88911206152956},
-    "광주-기아챔피언스필드":        {"areaCd": "29", "signguCd": "29170", "city": "광주 북구",   "lat": 35.16820922209541, "lng": 126.88911206152956},
-    "SOOP스타디움":                 {"areaCd": "29", "signguCd": "29140", "city": "광주 서구",   "lat": 35.13539260200561, "lng": 126.8788644463333},
-    "광주염주체육관":               {"areaCd": "29", "signguCd": "29140", "city": "광주 서구",   "lat": 35.13539260200561, "lng": 126.8788644463333},
-    "광주월드컵경기장":             {"areaCd": "29", "signguCd": "29140", "city": "광주 서구",   "lat": 35.13368228982632, "lng": 126.87489504742325},
+    "광주기아챔피언스필드":         {"areaCd": "29", "signguCd": "29170", "city": "광주 북구",    "lat": 35.16820922209541,  "lng": 126.88911206152956},
+    "SOOP스타디움":                 {"areaCd": "29", "signguCd": "29140", "city": "광주 서구",    "lat": 35.13539260200561,  "lng": 126.8788644463333},
+    "광주염주체육관":               {"areaCd": "29", "signguCd": "29140", "city": "광주 서구",    "lat": 35.13539260200561,  "lng": 126.8788644463333},
+    "광주월드컵경기장":             {"areaCd": "29", "signguCd": "29140", "city": "광주 서구",    "lat": 35.13368228982632,  "lng": 126.87489504742325, "api_name": "광주월드컵경기장"},
 
     # ── 부산 ──────────────────────────────────
-    "사직야구장":                   {"areaCd": "26", "signguCd": "26260", "city": "부산 동래",   "lat": 35.194017568250274,"lng": 129.06154402103502},
-    "사직실내체육관":               {"areaCd": "26", "signguCd": "26260", "city": "부산 동래",   "lat": 35.1924185304639,  "lng": 129.0607198031},
-    "부산사직체육관":               {"areaCd": "26", "signguCd": "26260", "city": "부산 동래",   "lat": 35.1924185304639,  "lng": 129.0607198031},
-    "강서실내체육관":               {"areaCd": "26", "signguCd": "26440", "city": "부산 강서",   "lat": 35.2101315792417,  "lng": 128.97223684359},
-    "부산강서체육관":               {"areaCd": "26", "signguCd": "26440", "city": "부산 강서",   "lat": 35.2101315792417,  "lng": 128.97223684359},
-    "구덕운동장":               {"areaCd": "26", "signguCd": "26140", "city": "부산 서구",   "lat": 35.116546389784666, "lng": 129.01450666537704},
+    "사직야구장":                   {"areaCd": "26", "signguCd": "26260", "city": "부산 동래",    "lat": 35.194017568250274, "lng": 129.06154402103502, "api_name": "사직야구장"},
+    "사직실내체육관":               {"areaCd": "26", "signguCd": "26260", "city": "부산 동래",    "lat": 35.1924185304639,   "lng": 129.0607198031},
+    "강서실내체육관":               {"areaCd": "26", "signguCd": "26440", "city": "부산 강서",    "lat": 35.2101315792417,   "lng": 128.97223684359},
+    "부산강서체육관":               {"areaCd": "26", "signguCd": "26440", "city": "부산 강서",    "lat": 35.2101315792417,   "lng": 128.97223684359},
+    "구덕운동장":                   {"areaCd": "26", "signguCd": "26140", "city": "부산 서구",    "lat": 35.116546389784666, "lng": 129.01450666537704},
 
     # ── 대구 ──────────────────────────────────
-    "대구삼성라이온즈파크":         {"areaCd": "27", "signguCd": "27260", "city": "대구 수성",   "lat": 35.8410595632468,  "lng": 128.681659448344},
-    "대구체육관":                   {"areaCd": "27", "signguCd": "27230", "city": "대구 북구",   "lat": 35.8934361897145,  "lng": 128.603454695703},
-    "대구실내체육관":               {"areaCd": "27", "signguCd": "27230", "city": "대구 북구",   "lat": 35.8934361897145,  "lng": 128.603454695703},
-    "대구iM뱅크파크":              {"areaCd": "27", "signguCd": "27230", "city": "대구 북구",   "lat": 35.881249474718,   "lng": 128.588242697948},
+    "대구삼성라이온즈파크":         {"areaCd": "27", "signguCd": "27260", "city": "대구 수성",    "lat": 35.8410595632468,   "lng": 128.681659448344},
+    "대구체육관":                   {"areaCd": "27", "signguCd": "27230", "city": "대구 북구",    "lat": 35.8934361897145,   "lng": 128.603454695703},
+    "대구실내체육관":               {"areaCd": "27", "signguCd": "27230", "city": "대구 북구",    "lat": 35.8934361897145,   "lng": 128.603454695703},
+    "대구iM뱅크파크":               {"areaCd": "27", "signguCd": "27230", "city": "대구 북구",    "lat": 35.881249474718,    "lng": 128.588242697948},
 
     # ── 경남 ──────────────────────────────────
-    "창원NC파크":                   {"areaCd": "48", "signguCd": "48127", "city": "창원 마산회원","lat": 35.22280070751199, "lng": 128.5820053292696},
-    "창원체육관":                   {"areaCd": "48", "signguCd": "48123", "city": "창원 성산",   "lat": 35.2327367366309,  "lng": 128.666283189427},
-    "창원실내체육관":               {"areaCd": "48", "signguCd": "48123", "city": "창원 성산",   "lat": 35.2327367366309,  "lng": 128.666283189427},
-    "창원축구센터":               {"areaCd": "48", "signguCd": "48123", "city": "창원 성산",   "lat": 35.223373624431055,   "lng": 128.7057039457541},
-    "김해종합운동장":               {"areaCd": "48", "signguCd": "48250", "city": "김해",   "lat": 35.25765996521216,   "lng": 128.87529350576827},
+    "창원NC파크":                   {"areaCd": "48", "signguCd": "48127", "city": "창원 마산회원", "lat": 35.22280070751199,  "lng": 128.5820053292696},
+    "창원체육관":                   {"areaCd": "48", "signguCd": "48123", "city": "창원 성산",    "lat": 35.2327367366309,   "lng": 128.666283189427},
+    "창원실내체육관":               {"areaCd": "48", "signguCd": "48123", "city": "창원 성산",    "lat": 35.2327367366309,   "lng": 128.666283189427},
+    "창원축구센터":                 {"areaCd": "48", "signguCd": "48123", "city": "창원 성산",    "lat": 35.223373624431055, "lng": 128.7057039457541},
+    "김해종합운동장":               {"areaCd": "48", "signguCd": "48250", "city": "김해",          "lat": 35.25765996521216,  "lng": 128.87529350576827},
 
     # ── 경북 ──────────────────────────────────
-    "김천실내체육관":               {"areaCd": "47", "signguCd": "47150", "city": "김천",         "lat": 36.14291691823165, "lng": 128.0868523538595},
-    "김천종합스포츠타운":           {"areaCd": "47", "signguCd": "47150", "city": "김천",         "lat": 36.14291691823165, "lng": 128.0868523538595},
-    "포항스틸야드":                 {"areaCd": "47", "signguCd": "47111", "city": "포항 남구",   "lat": 35.9977222824466,  "lng": 129.38441519469},
+    "김천실내체육관":               {"areaCd": "47", "signguCd": "47150", "city": "김천",          "lat": 36.14291691823165,  "lng": 128.0868523538595},
+    "김천종합스포츠타운":           {"areaCd": "47", "signguCd": "47150", "city": "김천",          "lat": 36.14291691823165,  "lng": 128.0868523538595, "api_name": "김천종합스포츠타운/배드민턴경기장"},
+    "포항스틸야드":                 {"areaCd": "47", "signguCd": "47111", "city": "포항 남구",    "lat": 35.9977222824466,   "lng": 129.38441519469,   "api_name": "포항스틸야드"},
 
     # ── 충남 ──────────────────────────────────
-    "유관순체육관":                 {"areaCd": "44", "signguCd": "44133", "city": "천안 서북",   "lat": 36.82087703646577, "lng": 127.11422320390537},
-    "천안유관순체육관":             {"areaCd": "44", "signguCd": "44133", "city": "천안 서북",   "lat": 36.82087703646577, "lng": 127.11422320390537},
-    "천안종합운동장":             {"areaCd": "44", "signguCd": "44133", "city": "천안 서북",    "lat": 36.8187937524983,    "lng": 127.115074152739},
-    "아산이순신체육관":             {"areaCd": "44", "signguCd": "44200", "city": "아산",         "lat": 36.76952716220382, "lng": 127.02446247383006},
-    "이순신종합운동장":             {"areaCd": "44", "signguCd": "44200", "city": "아산",         "lat": 36.7681868495457,  "lng": 127.021621583184},
+    "유관순체육관":                 {"areaCd": "44", "signguCd": "44133", "city": "천안 서북",    "lat": 36.82087703646577,  "lng": 127.11422320390537},
+    "천안유관순체육관":             {"areaCd": "44", "signguCd": "44133", "city": "천안 서북",    "lat": 36.82087703646577,  "lng": 127.11422320390537},
+    "천안종합운동장":               {"areaCd": "44", "signguCd": "44133", "city": "천안 서북",    "lat": 36.8187937524983,   "lng": 127.115074152739},
+    "아산이순신체육관":             {"areaCd": "44", "signguCd": "44200", "city": "아산",          "lat": 36.76952716220382,  "lng": 127.02446247383006},
+    "이순신종합운동장":             {"areaCd": "44", "signguCd": "44200", "city": "아산",          "lat": 36.7681868495457,   "lng": 127.021621583184},
 
     # ── 충북 ──────────────────────────────────
-    "청주체육관":                   {"areaCd": "43", "signguCd": "43112", "city": "청주 서원",   "lat": 36.63657016468344, "lng": 127.47344511906337},
-    "청주종합경기장":                   {"areaCd": "43", "signguCd": "43112", "city": "청주 서원",   "lat": 36.637825214953,   "lng": 127.472365950612},
+    "청주체육관":                   {"areaCd": "43", "signguCd": "43112", "city": "청주 서원",    "lat": 36.63657016468344,  "lng": 127.47344511906337},
+    "청주종합경기장":               {"areaCd": "43", "signguCd": "43112", "city": "청주 서원",    "lat": 36.637825214953,    "lng": 127.472365950612},
 
     # ── 강원 ──────────────────────────────────
-    "강릉하이원아레나":             {"areaCd": "51", "signguCd": "51150", "city": "강릉",         "lat": 37.77365338873246, "lng": 128.8975709883576},
-    "강릉아레나":                   {"areaCd": "51", "signguCd": "51150", "city": "강릉",         "lat": 37.77365338873246, "lng": 128.8975709883576},
-    "원주DB프로미아레나":           {"areaCd": "51", "signguCd": "51130", "city": "원주",         "lat": 37.339049803957,   "lng": 127.94209670124236},
+    "강릉하이원아레나":             {"areaCd": "51", "signguCd": "51150", "city": "강릉",          "lat": 37.77365338873246,  "lng": 128.8975709883576},
+    "강릉아레나":                   {"areaCd": "51", "signguCd": "51150", "city": "강릉",          "lat": 37.77365338873246,  "lng": 128.8975709883576},
+    "원주DB프로미아레나":           {"areaCd": "51", "signguCd": "51130", "city": "원주",          "lat": 37.339049803957,    "lng": 127.94209670124236},
 
     # ── 울산 ──────────────────────────────────
-    "울산문수축구경기장":           {"areaCd": "31", "signguCd": "31140", "city": "울산 남구",   "lat": 35.53528362130463, "lng": 129.2595358045965},
-    "울산동천체육관":               {"areaCd": "31", "signguCd": "31110", "city": "울산 중구",   "lat": 35.562344053715,   "lng": 129.350433515541},
+    "울산문수축구경기장":           {"areaCd": "31", "signguCd": "31140", "city": "울산 남구",    "lat": 35.53528362130463,  "lng": 129.2595358045965, "api_name": "문수월드컵경기장"},
+    "울산동천체육관":               {"areaCd": "31", "signguCd": "31110", "city": "울산 중구",    "lat": 35.562344053715,    "lng": 129.350433515541},
 
     # ── 전북 ──────────────────────────────────
-    "전주월드컵경기장":             {"areaCd": "52", "signguCd": "52113", "city": "전주 덕진",   "lat": 35.86814739484495, "lng": 127.064497525143},
+    "전주월드컵경기장":             {"areaCd": "52", "signguCd": "52113", "city": "전주 덕진",    "lat": 35.86814739484495,  "lng": 127.064497525143,  "api_name": "전주월드컵경기장"},
 
     # ── 전남 ──────────────────────────────────
-    "광양축구전용구장":             {"areaCd": "46", "signguCd": "46230", "city": "광양",   "lat": 34.9331123887351,    "lng": 127.727482914576},
+    "광양축구전용구장":             {"areaCd": "46", "signguCd": "46230", "city": "광양",          "lat": 34.9331123887351,   "lng": 127.727482914576},
 
     # ── 제주 ──────────────────────────────────
-    "제주월드컵경기장":             {"areaCd": "50", "signguCd": "50130", "city": "제주 서귀포", "lat": 33.246151627502,   "lng": 126.509381090559},
+    "제주월드컵경기장":             {"areaCd": "50", "signguCd": "50130", "city": "제주 서귀포",  "lat": 33.246151627502,    "lng": 126.509381090559},
 }
 
 
@@ -146,7 +138,6 @@ def get_region_scores(areaCd, signguCd, baseYm="202504"):
         "MobileOS": "AND", "MobileApp": "AppTest",
         "baseYm": baseYm, "areaCd": areaCd, "signguCd": signguCd,
     }
-
     for ix_cd in TAR_SVC_CODES:
         try:
             res = req.get(
@@ -157,9 +148,8 @@ def get_region_scores(areaCd, signguCd, baseYm="202504"):
             if val:
                 scores[ix_cd] = float(val)
         except Exception as e:
-            print(f"  [경고] 관광수요 API 오류 ({ix_cd}): {e}")
+            print(f"  [경고] 관광수요 API ({ix_cd}): {e}")
         time.sleep(0.1)
-
     for ix_cd in CUL_RES_CODES:
         try:
             res = req.get(
@@ -170,9 +160,8 @@ def get_region_scores(areaCd, signguCd, baseYm="202504"):
             if val:
                 scores[ix_cd] = float(val)
         except Exception as e:
-            print(f"  [경고] 문화수요 API 오류 ({ix_cd}): {e}")
+            print(f"  [경고] 문화수요 API ({ix_cd}): {e}")
         time.sleep(0.1)
-
     return scores
 
 
@@ -202,7 +191,7 @@ def get_hub_spots(areaCd, signguCd, baseYm="202507"):
             })
         return spots
     except Exception as e:
-        print(f"  [경고] 중심 관광지 API 오류: {e}")
+        print(f"  [경고] 중심 관광지: {e}")
         return []
 
 
@@ -230,7 +219,7 @@ def get_relations(areaCd, signguCd, baseYm="202504"):
             })
         return relations
     except Exception as e:
-        print(f"  [경고] 연관 관광지 API 오류: {e}")
+        print(f"  [경고] 연관 관광지: {e}")
         return []
 
 
@@ -255,7 +244,7 @@ def get_congestion(areaCd, signguCd):
                 congestion_map[nm] = float(rate) / 100
         return congestion_map
     except Exception as e:
-        print(f"  [경고] 혼잡도 API 오류: {e}")
+        print(f"  [경고] 혼잡도: {e}")
         return {}
 
 
@@ -293,7 +282,7 @@ def get_accessible_spots(areaCd, signguCd, filters):
                 accessible.add(title)
         return accessible
     except Exception as e:
-        print(f"  [경고] 무장애 API 오류: {e}")
+        print(f"  [경고] 무장애: {e}")
         return set()
 
 
@@ -309,38 +298,23 @@ def recommend():
     """
     추천 코스 생성 API (실시간 TourAPI 호출)
 
-    Request Body:
+    Request:
     {
         "survey": {
-            "경기장":       "잠실야구장",
+            "경기장":       "서울종합운동장야구장",
             "여행_방식":    "경기 전",
-            "이동방식":     "대중교통+도보",  // "자차+도보" / "도보 단독"
+            "이동방식":     "대중교통+도보",
             "최대이동시간": "1시간",
+            "걷는거리":     "상관없음",
             "동행":         "친구와 여행",
             "추가동행":     [],
             "컨셉":         "미식 탐방형",
             "추가조건":     ["혼잡 피하기"],
             "고정핀":       [],
+            "제외장소":     [],
             "제외조건":     [],
-            "커스텀비율":   {"맛집": 30, "관광지": 40, "자연": 0, "쇼핑": 30}  // 선택사항
+            "커스텀비율":   null
         }
-    }
-
-    Response:
-    {
-        "courses": [
-            {
-                "course_id": 1,
-                "spots": [
-                    {"name": "채빛퀴진", "category": "음식", "map_x": "...", "map_y": "..."}
-                ],
-                "summary": "서울 송파 미식 코스예요...",
-                "tags":    ["맛집", "자연", "쇼핑"],
-                "stats":   {"총 장소": 5, "맛집": 3, "관광": 1, "거리(km)": 6.0}
-            }
-        ],
-        "user_result": {"vector": [...], "meta": {...}},
-        "region":      {"areaCd": "11", "signguCd": "11710", "city": "서울 송파"}
     }
     """
     try:
@@ -359,62 +333,97 @@ def recommend():
         areaCd   = region["areaCd"]
         signguCd = region["signguCd"]
         city     = region["city"]
+        api_name = region.get("api_name", stadium)
 
         print(f"\n[추천 요청] {stadium} ({areaCd}/{signguCd})")
 
-        # 1. 사용자 벡터 생성 (경기장 좌표 주입)
-        survey["stadium_lat"] = region.get("lat")
-        survey["stadium_lng"] = region.get("lng")
+        # 사용자 벡터 생성
+        survey["stadium_lat"]       = region.get("lat")
+        survey["stadium_lng"]       = region.get("lng")
+        survey["all_stadiums"]      = set(STADIUM_TO_REGION.keys())
+        survey["selected_stadium"]  = stadium
+        survey["selected_api_name"] = api_name
+
+        # 경기장 고정핀 자동 추가
+        if stadium not in survey.get("고정핀", []):
+            survey["고정핀"] = survey.get("고정핀", []) + [stadium]
+
         user_result = build_user_vec(survey)
 
-        # 2. TourAPI 실시간 호출
-        print("  → 지역 수요 API 호출 중...")
+        # 고정핀을 api_name으로 교체
+        user_result["meta"]["fixed_pins"] = [
+            api_name if p == stadium else p
+            for p in user_result["meta"]["fixed_pins"]
+        ]
+
+        # TourAPI 실시간 호출
+        print("  → 지역 수요 API...")
         scores     = get_region_scores(areaCd, signguCd)
         region_vec = build_region_vec(scores)
 
-        print("  → 중심 관광지 API 호출 중...")
+        print("  → 중심 관광지 API...")
         spots = get_hub_spots(areaCd, signguCd)
 
-        print("  → 연관 관광지 API 호출 중...")
+        print("  → 연관 관광지 API...")
         relations = get_relations(areaCd, signguCd)
 
-        print("  → 혼잡도 API 호출 중...")
+        print("  → 혼잡도 API...")
         congestion_map        = get_congestion(areaCd, signguCd)
         region_avg_congestion = (
             sum(congestion_map.values()) / len(congestion_map)
             if congestion_map else 0.5
         )
 
-        # 3. 무장애 필터 (추가동행 있을 때만)
+        # 무장애 필터
         accessibility_filters = user_result["meta"].get("accessibility", [])
         accessible_spots      = set()
         if accessibility_filters:
-            print(f"  → 무장애 API 호출 중... (필터: {accessibility_filters})")
+            print(f"  → 무장애 API... ({accessibility_filters})")
             accessible_spots = get_accessible_spots(areaCd, signguCd, accessibility_filters)
 
-        # 4. 장소 벡터 즉시 생성
+        # 장소 벡터 생성
         for spot in spots:
             vec        = build_spot_vec(spot["mcls_nm"], region_vec)
             congestion = congestion_map.get(spot["spot_name"], region_avg_congestion)
             vec[-1]    = congestion
             spot["vector"] = vec
 
-        # 5. 무장애 필터 적용
+        # 무장애 필터 적용
         if accessible_spots:
             spots = [s for s in spots if s["spot_name"] in accessible_spots]
+
+        # 경기장 강제 추가 (API에 없는 경우)
+        existing_names = {s["spot_name"] for s in spots}
+        if api_name not in existing_names:
+            stadium_spot = {
+                "content_id": f"stadium_{signguCd}",
+                "spot_name":  api_name,
+                "area_cd":    areaCd,
+                "signgu_cd":  signguCd,
+                "lcls_nm":    "관광지",
+                "mcls_nm":    "문화관광",
+                "map_x":      str(region["lng"]),
+                "map_y":      str(region["lat"]),
+                "hub_rank":   "1",
+                "vector":     build_spot_vec("문화관광", region_vec),
+            }
+            stadium_spot["vector"][-1] = 0.9
+            spots.append(stadium_spot)
+            print(f"  → 경기장 강제 추가: {api_name}")
+        else:
+            print(f"  → 경기장 확인: {api_name}")
 
         if not spots:
             return jsonify({"error": "해당 조건에 맞는 장소가 없어요"}), 404
 
-        # 6. 필터링 → 코스 구성 → 대안 3개
-        print("  → 코스 생성 중...")
+        # 필터링 → 코스 생성
+        print("  → 코스 생성...")
         candidates  = filter_candidates(user_result, spots, relations)
         alt_courses = mmr_courses(user_result, candidates, k=3, n=5)
 
-        # 7. 응답 구성
+        # 응답 구성
         concept = user_result["meta"]["concept"]
         output  = []
-
         for i, course in enumerate(alt_courses, 1):
             summary = generate_summary(course, city, concept)
             output.append({
@@ -456,9 +465,9 @@ def recommend():
 @app.route("/feedback", methods=["POST"])
 def feedback():
     """
-    좋아요/싫어요 반영 후 재추천 API
+    좋아요/싫어요 반영 후 재추천
 
-    Request Body:
+    Request:
     {
         "user_result":         {"vector": [...], "meta": {...}},
         "region":              {"areaCd": "11", "signguCd": "11710", "city": "서울 송파"},
@@ -495,20 +504,38 @@ def feedback():
             vec[-1]    = congestion
             spot["vector"] = vec
 
-        # 좋아요/싫어요 장소 찾기
+        # 경기장 강제 추가
+        api_name = user_result["meta"].get("selected_api_name", "")
+        if api_name:
+            existing_names = {s["spot_name"] for s in spots}
+            if api_name not in existing_names:
+                stadium_spot = {
+                    "content_id": f"stadium_{signguCd}",
+                    "spot_name":  api_name,
+                    "area_cd":    areaCd,
+                    "signgu_cd":  signguCd,
+                    "lcls_nm":    "관광지",
+                    "mcls_nm":    "문화관광",
+                    "map_x":      str(region.get("lng", "")),
+                    "map_y":      str(region.get("lat", "")),
+                    "hub_rank":   "1",
+                    "vector":     build_spot_vec("문화관광", region_vec),
+                }
+                stadium_spot["vector"][-1] = 0.9
+                spots.append(stadium_spot)
+
+        # 좋아요/싫어요
         liked_names    = data.get("liked_spot_names", [])
         disliked_names = data.get("disliked_spot_names", [])
         liked    = [s for s in spots if s["spot_name"] in liked_names]
         disliked = [s for s in spots if s["spot_name"] in disliked_names]
 
-        # 피드백 반영 후 재추천
         updated     = apply_feedback(user_result, liked_spots=liked, disliked_spots=disliked)
         candidates  = filter_candidates(updated, spots, relations)
         alt_courses = mmr_courses(updated, candidates, k=3, n=5)
 
         concept = updated["meta"]["concept"]
         output  = []
-
         for i, course in enumerate(alt_courses, 1):
             summary = generate_summary(course, city, concept)
             output.append({
@@ -541,7 +568,7 @@ def feedback():
 
 @app.route("/survey", methods=["GET"])
 def get_survey():
-    """마지막 설문 불러오기 (Query Params: user_id)"""
+    """마지막 설문 불러오기 (Query: user_id)"""
     user_id = request.args.get("user_id")
     if not user_id:
         return jsonify({"error": "user_id가 없어요"}), 400
@@ -554,7 +581,7 @@ def get_survey():
 
 @app.route("/survey", methods=["POST"])
 def save_survey():
-    """설문 저장 (Request Body: {"user_id": "...", "survey": {...}})"""
+    """설문 저장 (Body: {user_id, survey})"""
     data = request.json
     try:
         res = req.post(f"{BACKEND_URL}/user/survey", json=data)
