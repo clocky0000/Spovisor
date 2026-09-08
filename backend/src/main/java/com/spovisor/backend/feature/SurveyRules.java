@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.Set;
 
 final class SurveyRules {
+    private static final Set<String> TRIP_DURATIONS = Set.of("당일치기", "1박 2일", "2박 3일", "3박 4일");
     private static final Set<String> TRAVEL_TIMING = Set.of("경기 전", "경기 후", "전후 모두");
     private static final Set<String> TRANSPORT = Set.of("대중교통+도보", "자차+도보", "도보 단독");
     private static final Set<String> MAX_TRAVEL_TIME = Set.of("30분", "1시간", "1시간 30분", "2시간", "3시간");
@@ -28,6 +29,13 @@ final class SurveyRules {
         }
 
         requireText(survey, "경기장");
+
+        JsonNode origin = survey.get("출발지");
+        if (origin != null && !origin.isNull() && !origin.asText().isBlank() && !origin.isTextual()) {
+            throw new IllegalArgumentException("출발지 형식이 올바르지 않습니다.");
+        }
+
+        requireChoice(survey, "여행기간", TRIP_DURATIONS);
         requireChoice(survey, "여행_방식", TRAVEL_TIMING);
         requireChoice(survey, "이동방식", TRANSPORT);
         requireChoice(survey, "최대이동시간", MAX_TRAVEL_TIME);

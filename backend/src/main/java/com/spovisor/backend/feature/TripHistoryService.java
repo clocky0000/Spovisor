@@ -5,6 +5,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.List;
 
 @Service
@@ -21,8 +24,20 @@ public class TripHistoryService {
     public List<TripResponse> list(User user) {
         var now = java.time.LocalDateTime.now();
         return repository.findAllByUserIdOrderByCreatedAtDesc(user.getId()).stream().map(trip -> {
-            if ("ACTIVE".equals(trip.getStatus()) && trip.getExpiresAt() != null && trip.getExpiresAt().isBefore(now)) {
-                trip.markExpired();
+            if ("ACTIVE".equals(trip.getStatus())) {
+                boolean isExpired = false;
+
+                LocalDate matchDay = trip.getTripDate();
+                if (matchDay != null) {
+                    LocalDateTime matchDayEnd = matchDay.atTime(LocalTime.MAX);
+                    if (now.isAfter(matchDayEnd)) {
+                        isExpired = true;
+                    }
+                }
+
+                if (isExpired) {
+                    trip.markExpired();
+                }
             }
             return TripResponse.from(trip);
         }).toList();
