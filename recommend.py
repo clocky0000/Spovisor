@@ -4,6 +4,7 @@
 
 import os
 import time
+import math
 import requests as req
 import xml.etree.ElementTree as ET
 from flask import Flask, request, jsonify
@@ -12,6 +13,7 @@ from dotenv import load_dotenv
 from model import (
     build_user_vec, build_spot_vec, build_region_vec,
     filter_candidates, mmr_courses, generate_summary, apply_feedback,
+    assign_times, build_multi_day_courses,
 )
 from constants import TAR_SVC_CODES, CUL_RES_CODES
 
@@ -21,7 +23,14 @@ app         = Flask(__name__)
 CORS(app)
 
 API_KEY     = os.getenv("API_KEY")
+KAKAO_KEY   = os.getenv("KAKAO_API_KEY", "")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8080")
+
+TRANSPORT_RADIUS_MAP = {
+    "대중교통+도보": 5,
+    "자차+도보":    15,
+    "도보 단독":     2,
+}
 
 # ── 경기장 → 지역코드 매핑 ───────────────────
 STADIUM_TO_REGION = {
@@ -129,6 +138,107 @@ STADIUM_TO_REGION = {
 }
 
 
+# ── 카카오 좌표 보완 ───────────────────────────
+_coord_cache = {}
+
+def fill_coords(spots, center_lat=None, center_lng=None, max_dist_km=20):
+    """
+    map_x/map_y 없는 장소 카카오 API로 좌표 보완
+    center_lat/lng 있으면 가장 가까운 결과 선택 (다른 지역 동명 장소 방지)
+    """
+    if not KAKAO_KEY:
+        return spots
+
+    def haversine(lat1, lng1, lat2, lng2):
+        import math
+        R = 6371
+        dlat = math.radians(lat2 - lat1)
+        dlng = math.radians(lng2 - lng1)
+        a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlng/2)**2
+        return R * 2 * math.asin(math.sqrt(a))
+
+    for spot in spots:
+        if spot.get("map_x") and spot.get("map_y"):
+            continue
+        name = spot["spot_name"]
+        if name in _coord_cache:
+            spot["map_x"], spot["map_y"] = _coord_cache[name]
+            continue
+        try:
+            params = {"query": name, "size": 5}
+            # 중심 좌표 있으면 반경 검색
+            if center_lat and center_lng:
+                params.update({
+                    "x": str(center_lng),
+                    "y": str(center_lat),
+                    "radius": int(max_dist_km * 1000),
+                })
+            res = req.get(
+                "https://dapi.kakao.com/v2/local/search/keyword.json",
+                headers={"Authorization": f"KakaoAK {KAKAO_KEY}"},
+                params=params,
+                timeout=5
+            )
+            docs = res.json().get("documents", [])
+            if not docs:
+                continue
+
+            # 중심 좌표 있으면 가장 가까운 결과 선택
+            if center_lat and center_lng and len(docs) > 1:
+                docs.sort(key=lambda d: haversine(
+                    center_lat, center_lng,
+                    float(d["y"]), float(d["x"])
+                ))
+                # 최대 반경 초과 결과 제외
+                docs = [d for d in docs if haversine(
+                    center_lat, center_lng,
+                    float(d["y"]), float(d["x"])
+                ) <= max_dist_km]
+                if not docs:
+                    continue
+
+            lng = docs[0]["x"]
+            lat = docs[0]["y"]
+            spot["map_x"] = lng
+            spot["map_y"] = lat
+            _coord_cache[name] = (lng, lat)
+        except Exception:
+            pass
+        time.sleep(0.05)
+    return spots
+
+
+def get_origin_coords(origin_text):
+    """출발지 텍스트 → 카카오 API 좌표 변환 (도로명주소 → 일반주소 → 장소명)"""
+    if not origin_text or not KAKAO_KEY:
+        return None, None
+    try:
+        res = req.get(
+            "https://dapi.kakao.com/v2/local/search/address.json",
+            headers={"Authorization": f"KakaoAK {KAKAO_KEY}"},
+            params={"query": origin_text, "size": 1},
+            timeout=5
+        )
+        docs = res.json().get("documents", [])
+        if docs:
+            return float(docs[0]["y"]), float(docs[0]["x"])
+    except Exception as e:
+        print(f"  [경고] 출발지 주소 검색 실패: {e}")
+    try:
+        res = req.get(
+            "https://dapi.kakao.com/v2/local/search/keyword.json",
+            headers={"Authorization": f"KakaoAK {KAKAO_KEY}"},
+            params={"query": origin_text, "size": 1},
+            timeout=5
+        )
+        docs = res.json().get("documents", [])
+        if docs:
+            return float(docs[0]["y"]), float(docs[0]["x"])
+    except Exception as e:
+        print(f"  [경고] 출발지 장소명 검색 실패: {e}")
+    return None, None
+
+
 # ── TourAPI 실시간 호출 함수 ───────────────────
 
 def get_region_scores(areaCd, signguCd, baseYm="202504"):
@@ -148,7 +258,7 @@ def get_region_scores(areaCd, signguCd, baseYm="202504"):
             if val:
                 scores[ix_cd] = float(val)
         except Exception as e:
-            print(f"  [경고] 관광수요 API ({ix_cd}): {e}")
+            print(f"  [경고] 관광수요 ({ix_cd}): {e}")
         time.sleep(0.1)
     for ix_cd in CUL_RES_CODES:
         try:
@@ -160,7 +270,7 @@ def get_region_scores(areaCd, signguCd, baseYm="202504"):
             if val:
                 scores[ix_cd] = float(val)
         except Exception as e:
-            print(f"  [경고] 문화수요 API ({ix_cd}): {e}")
+            print(f"  [경고] 문화수요 ({ix_cd}): {e}")
         time.sleep(0.1)
     return scores
 
@@ -286,6 +396,150 @@ def get_accessible_spots(areaCd, signguCd, filters):
         return set()
 
 
+# ── 공통 spots 준비 함수 ───────────────────────
+
+def prepare_spots(survey, region, areaCd, signguCd, api_name, user_result, region_vec):
+    """TourAPI 호출 + 벡터 생성 + 경기장 강제 추가 + 고정핀 추가"""
+
+    print("  → 중심 관광지 API...")
+    spots = get_hub_spots(areaCd, signguCd)
+
+    print("  → 연관 관광지 API...")
+    relations = get_relations(areaCd, signguCd)
+
+    print("  → 혼잡도 API...")
+    congestion_map        = get_congestion(areaCd, signguCd)
+    region_avg_congestion = (
+        sum(congestion_map.values()) / len(congestion_map)
+        if congestion_map else 0.5
+    )
+
+    # 무장애 필터
+    accessibility_filters = user_result["meta"].get("accessibility", [])
+    accessible_spots      = set()
+    if accessibility_filters:
+        print(f"  → 무장애 API... ({accessibility_filters})")
+        accessible_spots = get_accessible_spots(areaCd, signguCd, accessibility_filters)
+
+    # 장소 벡터 생성
+    for spot in spots:
+        vec        = build_spot_vec(spot["mcls_nm"], region_vec)
+        congestion = congestion_map.get(spot["spot_name"], region_avg_congestion)
+        vec[-1]    = congestion
+        spot["vector"] = vec
+
+    # 음식점 좌표 사전 보완 (카카오 API)
+    # 연관 관광지 API에서 온 음식점들 이름으로 좌표 검색
+    if KAKAO_KEY:
+        no_coord_food = [
+            s for s in spots
+            if s["mcls_nm"] in ["음식", "기타관광"]
+            and (not s.get("map_x") or not s.get("map_y"))
+        ]
+        if no_coord_food:
+            print(f"  → 음식점 좌표 보완: {len(no_coord_food)}개")
+            fill_coords(no_coord_food, center_lat=region.get("lat"), center_lng=region.get("lng"))
+
+    # 무장애 필터 적용
+    if accessible_spots:
+        spots = [s for s in spots if s["spot_name"] in accessible_spots]
+
+    # 고정핀 카카오 검색 + 반경 제한
+    stadium_lat     = region.get("lat")
+    stadium_lng     = region.get("lng")
+    max_pin_radius  = 30
+    user_fixed_pins = [p for p in survey.get("고정핀", []) if p != survey.get("경기장")]
+    invalid_pins    = []
+
+    for pin_name in user_fixed_pins:
+        already = any(pin_name in s["spot_name"] for s in spots)
+        if already or not KAKAO_KEY:
+            continue
+        try:
+            kres = req.get(
+                "https://dapi.kakao.com/v2/local/search/keyword.json",
+                headers={"Authorization": f"KakaoAK {KAKAO_KEY}"},
+                params={"query": pin_name, "size": 1},
+                timeout=5
+            )
+            docs = kres.json().get("documents", [])
+            if not docs:
+                continue
+            d   = docs[0]
+            lng = float(d["x"])
+            lat = float(d["y"])
+
+            if stadium_lat and stadium_lng:
+                import math
+                R    = 6371
+                dlat = math.radians(lat - stadium_lat)
+                dlng = math.radians(lng - stadium_lng)
+                a    = math.sin(dlat/2)**2 + math.cos(math.radians(stadium_lat)) * math.cos(math.radians(lat)) * math.sin(dlng/2)**2
+                dist = R * 2 * math.asin(math.sqrt(a))
+                if dist > max_pin_radius:
+                    invalid_pins.append({"name": pin_name, "dist_km": round(dist, 1)})
+                    continue
+
+            pin_spot = {
+                "content_id": f"pin_{pin_name}",
+                "spot_name":  pin_name,
+                "area_cd":    areaCd,
+                "signgu_cd":  signguCd,
+                "lcls_nm":    "관광지",
+                "mcls_nm":    "기타관광",
+                "map_x":      str(lng),
+                "map_y":      str(lat),
+                "hub_rank":   "1",
+                "vector":     build_spot_vec("기타관광", region_vec),
+            }
+            spots.append(pin_spot)
+            print(f"  → 고정핀 추가: {pin_name}")
+        except Exception as e:
+            print(f"  [경고] 고정핀 검색 실패 ({pin_name}): {e}")
+
+    # 반경 초과 고정핀 에러
+    if invalid_pins:
+        dists = ", ".join(f"{p['name']}({p['dist_km']}km)" for p in invalid_pins)
+        raise ValueError(f"경기장 반경 {max_pin_radius}km를 초과한 장소가 있어요: {dists}")
+
+    # 경기장 강제 추가
+    existing_names = {s["spot_name"] for s in spots}
+    if api_name not in existing_names:
+        stadium_spot = {
+            "content_id": f"stadium_{signguCd}",
+            "spot_name":  api_name,
+            "area_cd":    areaCd,
+            "signgu_cd":  signguCd,
+            "lcls_nm":    "관광지",
+            "mcls_nm":    "문화관광",
+            "map_x":      str(region["lng"]),
+            "map_y":      str(region["lat"]),
+            "hub_rank":   "1",
+            "vector":     build_spot_vec("문화관광", region_vec),
+        }
+        stadium_spot["vector"][-1] = 0.9
+        spots.append(stadium_spot)
+        print(f"  → 경기장 강제 추가: {api_name}")
+    else:
+        print(f"  → 경기장 확인: {api_name}")
+
+    return spots, relations
+
+
+def format_course_spots(course):
+    return [
+        {
+            "name":           s["spot_name"],
+            "category":       s["mcls_nm"],
+            "map_x":          s.get("map_x"),
+            "map_y":          s.get("map_y"),
+            "arrival_time":   s.get("arrival_time"),
+            "departure_time": s.get("departure_time"),
+        }
+        for s in course
+    ]
+
+
 # ── API 엔드포인트 ─────────────────────────────
 
 @app.route("/health", methods=["GET"])
@@ -296,24 +550,31 @@ def health():
 @app.route("/recommend", methods=["POST"])
 def recommend():
     """
-    추천 코스 생성 API (실시간 TourAPI 호출)
+    추천 코스 생성 API
 
-    Request:
+    Request Body:
     {
         "survey": {
-            "경기장":       "서울종합운동장야구장",
-            "여행_방식":    "경기 전",
-            "이동방식":     "대중교통+도보",
-            "최대이동시간": "1시간",
-            "걷는거리":     "상관없음",
-            "동행":         "친구와 여행",
-            "추가동행":     [],
-            "컨셉":         "미식 탐방형",
-            "추가조건":     ["혼잡 피하기"],
-            "고정핀":       [],
-            "제외장소":     [],
-            "제외조건":     [],
-            "커스텀비율":   null
+            "경기장":           "서울종합운동장야구장",
+            "출발지":           "서울역",
+            "여행기간":         "당일치기",
+            "여행_방식":        "경기 전",
+            "경기시간":         "18:30",
+            "도착희망시간":     "1시간 전",
+            "출발희망시간":     "10:00",
+            "연전관람여부":     "아니오",
+            "추가관람경기_일정": [],
+            "이동방식":         "대중교통+도보",
+            "최대이동시간":     "1시간",
+            "걷는거리":         "상관없음",
+            "동행":             "친구와 여행",
+            "추가동행":         [],
+            "컨셉":             "미식 탐방형",
+            "추가조건":         [],
+            "고정핀":           [],
+            "제외장소":         [],
+            "제외조건":         [],
+            "커스텀비율":       null
         }
     }
     """
@@ -335,7 +596,15 @@ def recommend():
         city     = region["city"]
         api_name = region.get("api_name", stadium)
 
-        print(f"\n[추천 요청] {stadium} ({areaCd}/{signguCd})")
+        print(f"\n[추천 요청] {stadium} ({areaCd}/{signguCd}) / {survey.get('여행기간','당일치기')}")
+
+        # 출발지 좌표 변환
+        origin_text = survey.get("출발지", "")
+        if origin_text:
+            origin_lat, origin_lng = get_origin_coords(origin_text)
+            survey["origin_lat"] = origin_lat
+            survey["origin_lng"] = origin_lng
+            print(f"  → 출발지: {origin_text} ({origin_lat}, {origin_lng})")
 
         # 사용자 벡터 생성
         survey["stadium_lat"]       = region.get("lat")
@@ -344,105 +613,111 @@ def recommend():
         survey["selected_stadium"]  = stadium
         survey["selected_api_name"] = api_name
 
-        # 경기장 고정핀 자동 추가
         if stadium not in survey.get("고정핀", []):
             survey["고정핀"] = survey.get("고정핀", []) + [stadium]
 
         user_result = build_user_vec(survey)
 
-        # 고정핀을 api_name으로 교체
+        # 고정핀 api_name으로 교체
         user_result["meta"]["fixed_pins"] = [
             api_name if p == stadium else p
             for p in user_result["meta"]["fixed_pins"]
         ]
 
-        # TourAPI 실시간 호출
+        # 지역 수요 API
         print("  → 지역 수요 API...")
         scores     = get_region_scores(areaCd, signguCd)
         region_vec = build_region_vec(scores)
 
-        print("  → 중심 관광지 API...")
-        spots = get_hub_spots(areaCd, signguCd)
-
-        print("  → 연관 관광지 API...")
-        relations = get_relations(areaCd, signguCd)
-
-        print("  → 혼잡도 API...")
-        congestion_map        = get_congestion(areaCd, signguCd)
-        region_avg_congestion = (
-            sum(congestion_map.values()) / len(congestion_map)
-            if congestion_map else 0.5
-        )
-
-        # 무장애 필터
-        accessibility_filters = user_result["meta"].get("accessibility", [])
-        accessible_spots      = set()
-        if accessibility_filters:
-            print(f"  → 무장애 API... ({accessibility_filters})")
-            accessible_spots = get_accessible_spots(areaCd, signguCd, accessibility_filters)
-
-        # 장소 벡터 생성
-        for spot in spots:
-            vec        = build_spot_vec(spot["mcls_nm"], region_vec)
-            congestion = congestion_map.get(spot["spot_name"], region_avg_congestion)
-            vec[-1]    = congestion
-            spot["vector"] = vec
-
-        # 무장애 필터 적용
-        if accessible_spots:
-            spots = [s for s in spots if s["spot_name"] in accessible_spots]
-
-        # 경기장 강제 추가 (API에 없는 경우)
-        existing_names = {s["spot_name"] for s in spots}
-        if api_name not in existing_names:
-            stadium_spot = {
-                "content_id": f"stadium_{signguCd}",
-                "spot_name":  api_name,
-                "area_cd":    areaCd,
-                "signgu_cd":  signguCd,
-                "lcls_nm":    "관광지",
-                "mcls_nm":    "문화관광",
-                "map_x":      str(region["lng"]),
-                "map_y":      str(region["lat"]),
-                "hub_rank":   "1",
-                "vector":     build_spot_vec("문화관광", region_vec),
-            }
-            stadium_spot["vector"][-1] = 0.9
-            spots.append(stadium_spot)
-            print(f"  → 경기장 강제 추가: {api_name}")
-        else:
-            print(f"  → 경기장 확인: {api_name}")
+        # spots 준비 (고정핀 + 경기장 포함)
+        try:
+            spots, relations = prepare_spots(
+                survey, region, areaCd, signguCd, api_name, user_result, region_vec
+            )
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
 
         if not spots:
             return jsonify({"error": "해당 조건에 맞는 장소가 없어요"}), 404
 
-        # 필터링 → 코스 생성
+        # 필터링
         print("  → 코스 생성...")
-        candidates  = filter_candidates(user_result, spots, relations)
-        alt_courses = mmr_courses(user_result, candidates, k=3, n=5)
 
-        # 응답 구성
-        concept = user_result["meta"]["concept"]
-        output  = []
-        for i, course in enumerate(alt_courses, 1):
-            summary = generate_summary(course, city, concept)
-            output.append({
-                "course_id": i,
-                "spots": [
-                    {
-                        "name":     s["spot_name"],
-                        "category": s["mcls_nm"],
-                        "map_x":    s.get("map_x"),
-                        "map_y":    s.get("map_y"),
-                    }
-                    for s in course
-                ],
-                "summary": summary["summary"],
-                "tags":    summary["tags"],
-                "stats":   summary["stats"],
+        # relations 음식점 좌표 카카오로 보완 (filter_candidates에서 좌표없는 장소 제외 대비)
+        if KAKAO_KEY:
+            relation_food_names = list({
+                r["related_nm"] for r in relations
+                if r.get("related_mcls") == "음식" and r.get("related_nm")
             })
+            if relation_food_names:
+                temp_spots = [{"spot_name": n, "mcls_nm": "음식", "map_x": None, "map_y": None} for n in relation_food_names]
+                fill_coords(temp_spots, center_lat=region.get("lat"), center_lng=region.get("lng"))
+                coord_map = {s["spot_name"]: (s.get("map_x"), s.get("map_y")) for s in temp_spots}
+                # relations에 좌표 정보 주입 (filter_candidates에서 extra_spots 생성 시 활용)
+                for r in relations:
+                    if r.get("related_mcls") == "음식" and r.get("related_nm") in coord_map:
+                        r["map_x"], r["map_y"] = coord_map[r["related_nm"]]
 
-        print(f"  → 완료! 코스 {len(output)}개 생성")
+        candidates = filter_candidates(user_result, spots, relations)
+        trip_days  = user_result["meta"]["trip_days"]
+        concept    = user_result["meta"]["concept"]
+        transport  = user_result["meta"]["transport"]
+        output     = []
+
+        if trip_days == 1:
+            # 당일치기
+            alt_courses = mmr_courses(user_result, candidates, k=3, n=5)
+            for i, course in enumerate(alt_courses, 1):
+                fill_coords(course)
+                course_timed = assign_times(
+                    course,
+                    start_time     = user_result["meta"]["depart_time"],
+                    transport      = transport,
+                    game_deadline  = user_result["meta"]["game_deadline"],
+                    game_spot_name = api_name,
+                )
+                summary = generate_summary(course, city, concept)
+                output.append({
+                    "course_id": i,
+                    "days": [{
+                        "day":       1,
+                        "has_game":  bool(user_result["meta"]["game_time"]),
+                        "game_time": user_result["meta"]["game_time"],
+                        "arrive_by": user_result["meta"]["game_deadline"],
+                        "spots":     format_course_spots(course_timed),
+                    }],
+                    "summary": summary["summary"],
+                    "tags":    summary["tags"],
+                    "stats":   summary["stats"],
+                })
+
+        else:
+            # 다박 여행
+            multi_courses = build_multi_day_courses(
+                user_result, candidates, api_name, k=3
+            )
+            for i, daily in enumerate(multi_courses, 1):
+                all_spots = [s for day in daily for s in day["spots"]]
+                fill_coords(all_spots)
+                summary = generate_summary(all_spots, city, concept)
+                output.append({
+                    "course_id": i,
+                    "days": [
+                        {
+                            "day":       d["day"],
+                            "has_game":  d["has_game"],
+                            "game_time": d.get("game_time"),
+                            "arrive_by": d.get("arrive_by"),
+                            "spots":     format_course_spots(d["spots"]),
+                        }
+                        for d in daily
+                    ],
+                    "summary": summary["summary"],
+                    "tags":    summary["tags"],
+                    "stats":   summary["stats"],
+                })
+
+        print(f"  → 완료! {trip_days}일 코스 {len(output)}개 생성")
 
         return jsonify({
             "courses":     output,
@@ -459,6 +734,8 @@ def recommend():
 
     except Exception as e:
         print(f"  [오류] {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 
@@ -467,7 +744,7 @@ def feedback():
     """
     좋아요/싫어요 반영 후 재추천
 
-    Request:
+    Request Body:
     {
         "user_result":         {"vector": [...], "meta": {...}},
         "region":              {"areaCd": "11", "signguCd": "11710", "city": "서울 송파"},
@@ -478,14 +755,15 @@ def feedback():
     try:
         data        = request.json
         user_result = data.get("user_result")
-        region      = data.get("region")
+        region_info = data.get("region")
 
-        if not user_result or not region:
+        if not user_result or not region_info:
             return jsonify({"error": "user_result 또는 region이 없어요"}), 400
 
-        areaCd   = region["areaCd"]
-        signguCd = region["signguCd"]
-        city     = region["city"]
+        areaCd   = region_info["areaCd"]
+        signguCd = region_info["signguCd"]
+        city     = region_info["city"]
+        api_name = user_result["meta"].get("selected_api_name", "")
 
         # TourAPI 재호출
         scores     = get_region_scores(areaCd, signguCd)
@@ -505,10 +783,11 @@ def feedback():
             spot["vector"] = vec
 
         # 경기장 강제 추가
-        api_name = user_result["meta"].get("selected_api_name", "")
         if api_name:
             existing_names = {s["spot_name"] for s in spots}
             if api_name not in existing_names:
+                lat = user_result["meta"].get("stadium_lat", 0)
+                lng = user_result["meta"].get("stadium_lng", 0)
                 stadium_spot = {
                     "content_id": f"stadium_{signguCd}",
                     "spot_name":  api_name,
@@ -516,43 +795,74 @@ def feedback():
                     "signgu_cd":  signguCd,
                     "lcls_nm":    "관광지",
                     "mcls_nm":    "문화관광",
-                    "map_x":      str(region.get("lng", "")),
-                    "map_y":      str(region.get("lat", "")),
+                    "map_x":      str(lng),
+                    "map_y":      str(lat),
                     "hub_rank":   "1",
                     "vector":     build_spot_vec("문화관광", region_vec),
                 }
                 stadium_spot["vector"][-1] = 0.9
                 spots.append(stadium_spot)
 
-        # 좋아요/싫어요
+        # 피드백 반영
         liked_names    = data.get("liked_spot_names", [])
         disliked_names = data.get("disliked_spot_names", [])
         liked    = [s for s in spots if s["spot_name"] in liked_names]
         disliked = [s for s in spots if s["spot_name"] in disliked_names]
 
-        updated     = apply_feedback(user_result, liked_spots=liked, disliked_spots=disliked)
-        candidates  = filter_candidates(updated, spots, relations)
-        alt_courses = mmr_courses(updated, candidates, k=3, n=5)
+        updated    = apply_feedback(user_result, liked_spots=liked, disliked_spots=disliked)
+        candidates = filter_candidates(updated, spots, relations)
+        trip_days  = updated["meta"]["trip_days"]
+        concept    = updated["meta"]["concept"]
+        transport  = updated["meta"]["transport"]
+        output     = []
 
-        concept = updated["meta"]["concept"]
-        output  = []
-        for i, course in enumerate(alt_courses, 1):
-            summary = generate_summary(course, city, concept)
-            output.append({
-                "course_id": i,
-                "spots": [
-                    {
-                        "name":     s["spot_name"],
-                        "category": s["mcls_nm"],
-                        "map_x":    s.get("map_x"),
-                        "map_y":    s.get("map_y"),
-                    }
-                    for s in course
-                ],
-                "summary": summary["summary"],
-                "tags":    summary["tags"],
-                "stats":   summary["stats"],
-            })
+        if trip_days == 1:
+            alt_courses = mmr_courses(updated, candidates, k=3, n=5)
+            for i, course in enumerate(alt_courses, 1):
+                fill_coords(course)
+                course_timed = assign_times(
+                    course,
+                    start_time     = updated["meta"]["depart_time"],
+                    transport      = transport,
+                    game_deadline  = updated["meta"]["game_deadline"],
+                    game_spot_name = api_name,
+                )
+                summary = generate_summary(course, city, concept)
+                output.append({
+                    "course_id": i,
+                    "days": [{
+                        "day":       1,
+                        "has_game":  bool(updated["meta"]["game_time"]),
+                        "game_time": updated["meta"]["game_time"],
+                        "arrive_by": updated["meta"]["game_deadline"],
+                        "spots":     format_course_spots(course_timed),
+                    }],
+                    "summary": summary["summary"],
+                    "tags":    summary["tags"],
+                    "stats":   summary["stats"],
+                })
+        else:
+            multi_courses = build_multi_day_courses(updated, candidates, api_name, k=3)
+            for i, daily in enumerate(multi_courses, 1):
+                all_spots = [s for day in daily for s in day["spots"]]
+                fill_coords(all_spots)
+                summary = generate_summary(all_spots, city, concept)
+                output.append({
+                    "course_id": i,
+                    "days": [
+                        {
+                            "day":       d["day"],
+                            "has_game":  d["has_game"],
+                            "game_time": d.get("game_time"),
+                            "arrive_by": d.get("arrive_by"),
+                            "spots":     format_course_spots(d["spots"]),
+                        }
+                        for d in daily
+                    ],
+                    "summary": summary["summary"],
+                    "tags":    summary["tags"],
+                    "stats":   summary["stats"],
+                })
 
         return jsonify({
             "courses":     output,
@@ -563,12 +873,12 @@ def feedback():
         })
 
     except Exception as e:
+        print(f"  [오류] {e}")
         return jsonify({"error": str(e)}), 500
 
 
 @app.route("/survey", methods=["GET"])
 def get_survey():
-    """마지막 설문 불러오기 (Query: user_id)"""
     user_id = request.args.get("user_id")
     if not user_id:
         return jsonify({"error": "user_id가 없어요"}), 400
@@ -581,7 +891,6 @@ def get_survey():
 
 @app.route("/survey", methods=["POST"])
 def save_survey():
-    """설문 저장 (Body: {user_id, survey})"""
     data = request.json
     try:
         res = req.post(f"{BACKEND_URL}/user/survey", json=data)
