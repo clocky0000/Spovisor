@@ -25,6 +25,13 @@ final class SurveyNormalizer {
 
         ObjectNode survey = JSON.objectNode();
         copyText(source, survey, "경기장", "stadium");
+
+        copyText(source, survey, "경기시간", "matchTime");
+        copyText(source, survey, "도착희망시간", "arrivalTime");
+        copyText(source, survey, "출발희망시간", "departureTime");
+        copyText(source, survey, "연전관람여부", "watchConsecutiveGames");
+        copyArray(source, survey, "추가관람경기_일정", "consecutiveGamesSchedule");
+
         copyText(source, survey, "출발지", "origin");
         copyText(source, survey, "여행기간", "tripDuration");
         copyText(source, survey, "여행_방식", "travelTiming");

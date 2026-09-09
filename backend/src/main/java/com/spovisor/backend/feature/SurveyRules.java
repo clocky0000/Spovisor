@@ -20,6 +20,9 @@ final class SurveyRules {
     private static final Set<String> EXCLUDED_CONDITIONS = Set.of("야외 장소 제외", "너무 먼 곳 제외", "페이링 긴 곳 제외");
     private static final Set<String> RATIO_KEYS = Set.of("맛집", "관광지", "자연", "쇼핑");
 
+    private static final Set<String> ARRIVAL_TIMES = Set.of("30분 전", "1시간 전", "1시간 30분 전", "2시간 전", "직전 입장", "여유 있게");
+    private static final Set<String> CONSECUTIVE_GAMES = Set.of("예", "아니오");
+
     private SurveyRules() {
     }
 
@@ -29,6 +32,13 @@ final class SurveyRules {
         }
 
         requireText(survey, "경기장");
+
+        // ✨ 새롭게 추가된 시간 및 n연전 필드 검증 로직
+        requireText(survey, "경기시간");
+        requireText(survey, "출발희망시간");
+        requireChoice(survey, "도착희망시간", ARRIVAL_TIMES);
+        requireChoice(survey, "연전관람여부", CONSECUTIVE_GAMES);
+        validateTextArray(survey, "추가관람경기_일정"); // 날짜 텍스트 배열 확인
 
         JsonNode origin = survey.get("출발지");
         if (origin != null && !origin.isNull() && !origin.asText().isBlank() && !origin.isTextual()) {
@@ -97,6 +107,16 @@ final class SurveyRules {
         for (JsonNode item : value) {
             if (!item.isTextual() || !choices.contains(item.asText())) {
                 throw new IllegalArgumentException(field + " 선택값이 올바르지 않습니다.");
+            }
+        }
+    }
+
+    private static void validateTextArray(JsonNode survey, String field) {
+        JsonNode value = survey.get(field);
+        if (value == null || !value.isArray()) throw new IllegalArgumentException(field + "은(는) 배열이어야 합니다.");
+        for (JsonNode item : value) {
+            if (!item.isTextual() || item.asText().isBlank()) {
+                throw new IllegalArgumentException(field + "에는 텍스트가 포함되어야 합니다.");
             }
         }
     }
