@@ -279,6 +279,12 @@ function dateKey(year: number, monthIndex: number, day: number) {
   return `${year}-${String(monthIndex + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
+function getNextDateKey(dateStr: string, daysToAdd: number) {
+  const d = new Date(dateStr);
+  d.setDate(d.getDate() + daysToAdd);
+  return dateKey(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
 function dateLabel(value: string) {
   const [year, month, day] = value.split('-');
   return `${year}년 ${Number(month)}월 ${Number(day)}일`;
@@ -543,6 +549,32 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
   const [favoritePlaceLabel, setFavoritePlaceLabel] = useState('');
   const [originSource, setOriginSource] = useState<'gps' | 'search' | null>(null);
   const [tripDuration, setTripDuration] = useState<string>('당일치기');
+
+  // ✨ 1. 새로 추가할 상태 (출발 희망 시간, 연전 관람 여부)
+  const [departureTime, setDepartureTime] = useState<string>('09:00'); 
+  const [watchConsecutiveGames, setWatchConsecutiveGames] = useState<boolean>(false);
+
+  // ✨ 2. 연전 경기(n연전) 계산 로직 추가
+  const consecutiveGamesList = useMemo(() => {
+    if (!selectedGame || tripDuration === '당일치기') return [];
+    
+    // 숙박 기간에 따라 탐색할 추가 일수 계산
+    const daysCount = tripDuration === '1박 2일' ? 1 : tripDuration === '2박 3일' ? 2 : tripDuration === '3박 4일' ? 3 : 0;
+    const extraGames: Game[] = [];
+    
+    for (let i = 1; i <= daysCount; i++) {
+      const nextDate = getNextDateKey(selectedGame.date, i);
+      // 같은 경기장, 같은 홈/어웨이 팀의 다음 날 경기가 있는지 확인
+      const game = GAMES.find(g => 
+        g.date === nextDate && 
+        g.home === selectedGame.home && 
+        g.away === selectedGame.away && 
+        g.stadium === selectedGame.stadium
+      );
+      if (game) extraGames.push(game);
+    }
+    return extraGames;
+  }, [selectedGame, tripDuration]);
 
   // Course States
   // AI 모델 연동 전까지는 추천 결과를 비워둡니다.
@@ -824,6 +856,11 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
     '출발지': origin,
     '여행기간': tripDuration,
     '여행_방식': tripTiming,
+    '경기시간': selectedGame?.time ?? startTime,
+    '도착희망시간': arrivalTime, // 예: '1시간 전'
+    '출발희망시간': departureTime, // 예: '09:00'
+    '연전관람여부': watchConsecutiveGames && consecutiveGamesList.length > 0 ? '예' : '아니오',
+    '추가관람경기_일정': watchConsecutiveGames ? consecutiveGamesList.map(g => `${g.date} ${g.time}`) : [],
     '이동방식': transport.includes('자차') ? '자차+도보' : transport.includes('대중교통') ? '대중교통+도보' : '도보 단독',
     '최대이동시간': maxTime,
     '걷는거리': walkDist.replace('이하', '이내'),
@@ -1511,6 +1548,17 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                     <TouchableOpacity style={styles.favoriteSaveBtn} onPress={saveCurrentOriginAsFavorite}><Text style={styles.favoriteSaveBtnText}>자주 가는 장소 저장</Text></TouchableOpacity>
                   </View>
 
+                  <Text style={styles.inputLabel}>출발 희망 시간</Text>
+                  <View style={styles.readOnlyInput}>
+                    <Clock size={15} color="#5B44E8" />
+                    <TextInput 
+                      value={departureTime} 
+                      onChangeText={setDepartureTime} 
+                      style={{ flex: 1, fontSize: 14, fontWeight: '700', color: '#0F0E1A' }} 
+                      placeholder="예: 09:00 또는 오전 9시" 
+                    />
+                  </View>
+
                   <Text style={styles.inputLabel}>여행 기간</Text>
                   <View style={{ flexDirection: 'row', gap: 8}}>
                     {['당일치기', '1박 2일', '2박 3일', '3박 4일'].map((t) => (
@@ -1519,6 +1567,44 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                       </TouchableOpacity>
                     ))}
                   </View>
+
+                  {/* ✨ 연전 체크 UI 업데이트: 1박 이상 선택 시 항상 노출하여 상태를 알려줌 */}
+                  {tripDuration !== '당일치기' && (
+                    <View style={{ marginTop: 12, backgroundColor: '#F8FAFC', padding: 16, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0' }}>
+                      <Text style={styles.inputLabel}>연전(연속 경기) 관람 여부</Text>
+                      
+                      {consecutiveGamesList.length > 0 ? (
+                        <>
+                          <TouchableOpacity 
+                            style={[styles.outlineBtn, watchConsecutiveGames && styles.outlineBtnActive, { height: 'auto', paddingVertical: 12 }]} 
+                            onPress={() => setWatchConsecutiveGames(!watchConsecutiveGames)}
+                          >
+                            <Text style={[styles.outlineBtnText, watchConsecutiveGames && styles.outlineBtnTextActive]}>
+                              {watchConsecutiveGames 
+                                ? '☑ 연전 모두 관람 (코스에 포함)' 
+                                : '☐ 다음 날 경기도 관람할까요?'}
+                            </Text>
+                          </TouchableOpacity>
+
+                          {/* 체크 시 추가 관람 경기 일정을 화면에 명시적으로 표시 */}
+                          {watchConsecutiveGames && (
+                            <View style={{ marginTop: 12, padding: 12, backgroundColor: '#EEF2FF', borderRadius: 8 }}>
+                              <Text style={{ fontSize: 12, fontWeight: 'bold', color: '#5B44E8', marginBottom: 6 }}>추가 관람 예정 경기</Text>
+                              {consecutiveGamesList.map((g, i) => (
+                                <Text key={i} style={{ fontSize: 12, color: '#4B5563', marginTop: 2 }}>
+                                  • {dateLabel(g.date)} {g.time}
+                                </Text>
+                              ))}
+                            </View>
+                          )}
+                        </>
+                      ) : (
+                        <Text style={{ fontSize: 12, color: '#9CA3AF', lineHeight: 18 }}>
+                          선택하신 여행 기간 내에 동일한 장소에서 열리는 연전 일정이 없습니다.
+                        </Text>
+                      )}
+                    </View>
+                  )}
 
                   <Text style={styles.inputLabel}>이동수단 (복수 선택 가능)</Text>
                   <View style={{ flexDirection: 'row', gap: 8 }}>
