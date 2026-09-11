@@ -13,15 +13,18 @@ public class RecommendationRequestService {
     private final RecommendationRequestRepository repository;
     private final ObjectMapper objectMapper;
     private final ApplicationEventPublisher eventPublisher;
+    private final RecommendationRegionValidator regionValidator;
 
-    public RecommendationRequestService(RecommendationRequestRepository repository, ObjectMapper objectMapper, ApplicationEventPublisher applicationEventPublisher) {
+    public RecommendationRequestService(RecommendationRequestRepository repository, ObjectMapper objectMapper, ApplicationEventPublisher applicationEventPublisher, RecommendationRegionValidator regionValidator) {
         this.repository = repository;
         this.objectMapper = objectMapper;
         this.eventPublisher = applicationEventPublisher;
+        this.regionValidator = regionValidator;
     }
 
     @Transactional
     public RecommendationRequestResponse create(User user, JsonNode survey) {
+        regionValidator.validate(survey);
         JsonNode normalizedSurvey = SurveyNormalizer.normalize(survey);
         SurveyRules.validate(normalizedSurvey);
         try {
