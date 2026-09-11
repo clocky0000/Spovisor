@@ -444,12 +444,9 @@ def prepare_spots(survey, region, areaCd, signguCd, api_name, user_result, regio
     if accessible_spots:
         spots = [s for s in spots if s["spot_name"] in accessible_spots]
 
-    # 고정핀 카카오 검색 + 반경 제한
-    stadium_lat     = region.get("lat")
-    stadium_lng     = region.get("lng")
-    max_pin_radius  = 30
+    # 고정핀 카카오 검색 후 후보에 강제 추가
+    # 반경 제한은 백엔드에서 60km로 처리
     user_fixed_pins = [p for p in survey.get("고정핀", []) if p != survey.get("경기장")]
-    invalid_pins    = []
 
     for pin_name in user_fixed_pins:
         already = any(pin_name in s["spot_name"] for s in spots)
@@ -464,21 +461,12 @@ def prepare_spots(survey, region, areaCd, signguCd, api_name, user_result, regio
             )
             docs = kres.json().get("documents", [])
             if not docs:
+                print(f"  [경고] 고정핀 검색 결과 없음: {pin_name}")
                 continue
+
             d   = docs[0]
             lng = float(d["x"])
             lat = float(d["y"])
-
-            if stadium_lat and stadium_lng:
-                import math
-                R    = 6371
-                dlat = math.radians(lat - stadium_lat)
-                dlng = math.radians(lng - stadium_lng)
-                a    = math.sin(dlat/2)**2 + math.cos(math.radians(stadium_lat)) * math.cos(math.radians(lat)) * math.sin(dlng/2)**2
-                dist = R * 2 * math.asin(math.sqrt(a))
-                if dist > max_pin_radius:
-                    invalid_pins.append({"name": pin_name, "dist_km": round(dist, 1)})
-                    continue
 
             pin_spot = {
                 "content_id": f"pin_{pin_name}",
@@ -494,13 +482,9 @@ def prepare_spots(survey, region, areaCd, signguCd, api_name, user_result, regio
             }
             spots.append(pin_spot)
             print(f"  → 고정핀 추가: {pin_name}")
+
         except Exception as e:
             print(f"  [경고] 고정핀 검색 실패 ({pin_name}): {e}")
-
-    # 반경 초과 고정핀 에러
-    if invalid_pins:
-        dists = ", ".join(f"{p['name']}({p['dist_km']}km)" for p in invalid_pins)
-        raise ValueError(f"경기장 반경 {max_pin_radius}km를 초과한 장소가 있어요: {dists}")
 
     # 경기장 강제 추가
     existing_names = {s["spot_name"] for s in spots}
