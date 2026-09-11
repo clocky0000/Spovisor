@@ -52,9 +52,14 @@ public class AiIntegrationService {
         }
 
         try {
-            // survey JSON 파싱
-            JsonNode surveyNode = objectMapper.readTree(entity.getSurveyJson());
-            Map<String, Object> requestBody = Map.of("survey", surveyNode);
+            Map<String, Object> surveyMap = objectMapper.readValue(entity.getSurveyJson(), Map.class);
+
+            Map<String, Object> requestBody = new HashMap<>();
+            if (surveyMap.containsKey("survey")) {
+                requestBody.put("survey", surveyMap.get("survey"));
+            } else {
+                requestBody.put("survey", surveyMap);
+            }
 
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
@@ -103,38 +108,6 @@ public class AiIntegrationService {
         } catch (Exception e) {
             log.error("[AI] Flask 서버 통신 에러", e);
             throw new RuntimeException("AI 피드백 서버 연동 중 오류가 발생했습니다.");
-        }
-    }
-
-    // ── 3. Flask 서버 설문 조회 프록시 (/survey GET) ───────────
-    public JsonNode fetchSurveyFromAi(String userId) {
-        String url = aiServerUrl + "/survey?user_id=" + userId;
-        try {
-            return restTemplate.getForObject(url, JsonNode.class);
-        } catch (Exception e) {
-            log.warn("[AI] 설문 조회 실패: userId={}", userId, e);
-            return null;
-        }
-    }
-
-    // ── 4. Flask 서버 설문 저장 프록시 (/survey POST) ──────────
-    public void saveSurveyToAi(String userId, JsonNode survey) {
-        String url = aiServerUrl + "/survey";
-
-        Map<String, Object> requestBody = Map.of(
-                "user_id", userId,
-                "survey", survey
-        );
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        HttpEntity<Map<String, Object>> request = new HttpEntity<>(requestBody, headers);
-
-        try {
-            restTemplate.postForObject(url, request, String.class);
-        } catch (Exception e) {
-            log.error("[AI] 설문 저장 요청 실패: userId={}", userId, e);
-            throw new RuntimeException("설문 저장 실패");
         }
     }
 }
