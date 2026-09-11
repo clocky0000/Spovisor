@@ -1,5 +1,4 @@
 import { Image } from 'expo-image';
-import * as Location from 'expo-location';
 import { router } from 'expo-router';
 import {
   ArrowLeft,
@@ -274,6 +273,7 @@ const CONCEPT_PREVIEWS: Record<string, {
 
 const GAMES: Game[] = OFFICIAL_GAMES;
 const initialGame = GAMES.find((game) => game.date === currentDateKey) ?? GAMES[0];
+const MAX_INCLUDED_PLACE_DISTANCE_KM = 60;
 
 function dateKey(year: number, monthIndex: number, day: number) {
   return `${year}-${String(monthIndex + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
@@ -308,6 +308,32 @@ function aiStadiumName(value: string) {
     '김천종합운동장': '김천종합스포츠타운',
   };
   return aliases[value] ?? value;
+}
+
+function normalizedPlaceName(value: string) {
+  return value.replace(/\s+/g, '').replace(/[^0-9A-Za-z가-힣]/g, '').toLowerCase();
+}
+
+function bestPlaceMatch(query: string, results: SpotSearchResult[]) {
+  const normalizedQuery = normalizedPlaceName(query);
+  return results.find((result) => normalizedPlaceName(result.name) === normalizedQuery)
+    ?? results.find((result) => normalizedPlaceName(result.name).includes(normalizedQuery))
+    ?? results[0];
+}
+
+function distanceInKilometers(
+  from: { latitude: number; longitude: number },
+  to: { latitude: number; longitude: number },
+) {
+  const toRadians = (degrees: number) => degrees * Math.PI / 180;
+  const earthRadiusKm = 6371;
+  const latitudeDelta = toRadians(to.latitude - from.latitude);
+  const longitudeDelta = toRadians(to.longitude - from.longitude);
+  const latitude1 = toRadians(from.latitude);
+  const latitude2 = toRadians(to.latitude);
+  const haversine = Math.sin(latitudeDelta / 2) ** 2
+    + Math.cos(latitude1) * Math.cos(latitude2) * Math.sin(longitudeDelta / 2) ** 2;
+  return earthRadiusKm * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
 }
 
 function normalizeTeamName(value: string) {
@@ -511,11 +537,12 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
   const [currentPasswordDraft, setCurrentPasswordDraft] = useState('');
   const [newPasswordDraft, setNewPasswordDraft] = useState('');
   const [origin, setOrigin] = useState('');
+  const [originName, setOriginName] = useState('');
   const [originCoordinates, setOriginCoordinates] = useState<{ latitude: number; longitude: number } | null>(null);
-  const [isLocating, setIsLocating] = useState(false);
   const [calendarMonth, setCalendarMonth] = useState(() => { const now = new Date(); return new Date(now.getFullYear(), now.getMonth(), 1); });
   const [selectedDate, setSelectedDate] = useState<string>(() => { const now = new Date(); return dateKey(now.getFullYear(), now.getMonth(), now.getDate()); });
   const [selectedGame, setSelectedGame] = useState<Game | null>(initialGame);
+  const [stadiumCoordinates, setStadiumCoordinates] = useState<{ latitude: number; longitude: number } | null>(null);
   const [gameViewMode, setGameViewMode] = useState<'all' | 'favorites'>('all');
 
   // Form State
@@ -538,6 +565,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
   const [placeQuery, setPlaceQuery] = useState('');
   const [placeResults, setPlaceResults] = useState<SpotSearchResult[]>([]);
   const [isSearchingPlaces, setIsSearchingPlaces] = useState(false);
+  const [placeValidationMessage, setPlaceValidationMessage] = useState<string | null>(null);
   const [fixedPlaces, setFixedPlaces] = useState<SpotSearchResult[]>([]);
   const [excludePlaceQuery, setExcludePlaceQuery] = useState('');
   const [excludePlaceResults, setExcludePlaceResults] = useState<SpotSearchResult[]>([]);
@@ -547,7 +575,11 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
   const [originResults, setOriginResults] = useState<SpotSearchResult[]>([]);
   const [isSearchingOrigin, setIsSearchingOrigin] = useState(false);
   const [favoritePlaceLabel, setFavoritePlaceLabel] = useState('');
-  const [originSource, setOriginSource] = useState<'gps' | 'search' | null>(null);
+  const [favoritePlaceSheet, setFavoritePlaceSheet] = useState<'save' | 'manage' | null>(null);
+  const favoritePlaceSheetY = useRef(new Animated.Value(420)).current;
+  const favoritePlaceBackdropOpacity = useRef(new Animated.Value(0)).current;
+  const [isSavingFavoritePlace, setIsSavingFavoritePlace] = useState(false);
+  const [deletingFavoritePlaceId, setDeletingFavoritePlaceId] = useState<number | null>(null);
   const [tripDuration, setTripDuration] = useState<string>('당일치기');
 
   // ✨ 1. 새로 추가할 상태 (출발 희망 시간, 연전 관람 여부)
@@ -622,6 +654,31 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
       // 첫 실행에서 빈 목록은 정상입니다.
     });
   }, []);
+
+  useEffect(() => {
+    const stadium = selectedGame?.stadium;
+    if (!stadium) {
+      setStadiumCoordinates(null);
+      return;
+    }
+
+    let cancelled = false;
+    setStadiumCoordinates(null);
+    const stadiumQuery = aiStadiumName(stadium);
+    searchSpots(stadiumQuery)
+      .then((results) => {
+        if (cancelled) return;
+        const match = bestPlaceMatch(stadiumQuery, results);
+        if (match?.latitude != null && match.longitude != null) {
+          setStadiumCoordinates({ latitude: match.latitude, longitude: match.longitude });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setStadiumCoordinates(null);
+      });
+
+    return () => { cancelled = true; };
+  }, [selectedGame?.stadium]);
 
   useEffect(() => {
     const query = placeQuery.trim();
@@ -700,6 +757,17 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
     );
   };
 
+  const toggleCustomRatio = () => {
+    if (useCustomRatio) {
+      setUseCustomRatio(false);
+      setConcept('미식 탐방형');
+      return;
+    }
+
+    setConcept(null);
+    setUseCustomRatio(true);
+  };
+
   const toggleExcludeFilter = (filter: string) => {
     setExcludeFilters((prev) =>
       prev.includes(filter) ? prev.filter((item) => item !== filter) : [...prev, filter]
@@ -719,42 +787,21 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
     });
   };
 
-  const handleUseCurrentLocation = async () => {
-    setIsLocating(true);
-    try {
-      const permission = await Location.requestForegroundPermissionsAsync();
-      if (permission.status !== Location.PermissionStatus.GRANTED) {
-        Alert.alert('위치 권한 필요', '현재 위치를 출발지로 사용하려면 위치 권한을 허용해주세요.');
-        return;
-      }
-
-      const position = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Highest,
-        mayShowUserSettingsDialog: true,
-      });
-      const { latitude, longitude } = position.coords;
-      setOriginCoordinates({ latitude, longitude });
-      setOriginSource('gps');
-      setOriginQuery('');
-      setOrigin(`현재 위치 (${latitude.toFixed(4)}, ${longitude.toFixed(4)})`);
-
-      try {
-        const addresses = await Location.reverseGeocodeAsync({ latitude, longitude });
-        const address = addresses[0];
-        const label = [address?.district, address?.city, address?.street].filter(Boolean).join(' ');
-        if (label) setOrigin(label);
-      } catch {
-        // 좌표만으로도 AI 서버가 출발지를 처리할 수 있으므로 주소 변환 실패는 무시합니다.
-      }
-    } catch {
-      Alert.alert('현재 위치 확인 실패', '위치를 확인하지 못했습니다. 출발지를 직접 입력해주세요.');
-    } finally {
-      setIsLocating(false);
-    }
-  };
-
   const addFixedPlace = (place: SpotSearchResult) => {
     if (fixedPlaces.some((item) => item.contentId === place.contentId)) return;
+    if (!stadiumCoordinates || place.latitude == null || place.longitude == null) {
+      setPlaceValidationMessage('경기장과 장소의 위치를 확인하고 있어요. 잠시 후 다시 선택해주세요.');
+      return;
+    }
+    const distanceKm = distanceInKilometers(stadiumCoordinates, {
+      latitude: place.latitude,
+      longitude: place.longitude,
+    });
+    if (distanceKm > MAX_INCLUDED_PLACE_DISTANCE_KM) {
+      setPlaceValidationMessage('경기장에서 너무 먼 지역의 장소는 포함할 수 없어요.');
+      return;
+    }
+    setPlaceValidationMessage(null);
     setFixedPlaces((previous) => [...previous, place]);
     setPlaceQuery('');
     setPlaceResults([]);
@@ -769,11 +816,28 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
 
   const selectOriginPlace = (place: SpotSearchResult) => {
     if (place.latitude == null || place.longitude == null) return;
+    setOriginName(place.name);
     setOrigin(place.roadAddress || place.address || place.name);
     setOriginCoordinates({ latitude: place.latitude, longitude: place.longitude });
-    setOriginSource('search');
     setOriginQuery('');
     setOriginResults([]);
+  };
+
+  const clearOriginSelection = () => {
+    setOrigin('');
+    setOriginName('');
+    setOriginCoordinates(null);
+    setOriginQuery('');
+    setOriginResults([]);
+  };
+
+  const openFavoritePlaceSave = () => {
+    if (!originCoordinates || !origin.trim()) {
+      Alert.alert('출발지 선택 필요', '먼저 검색 결과에서 출발지를 선택해주세요.');
+      return;
+    }
+    setFavoritePlaceLabel('');
+    setFavoritePlaceSheet('save');
   };
 
   const toggleFavoriteTeam = (sport: Sport, teamName: string) => {
@@ -826,22 +890,43 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
 
   const saveCurrentOriginAsFavorite = async () => {
     if (!originCoordinates || !origin.trim()) {
-      Alert.alert('출발지 선택 필요', '먼저 현재 위치 또는 검색 결과에서 출발지를 선택해주세요.');
+      Alert.alert('출발지 선택 필요', '먼저 검색 결과에서 출발지를 선택해주세요.');
       return;
     }
+    if (!favoritePlaceLabel.trim()) {
+      Alert.alert('이름 입력 필요', '저장할 장소의 이름을 입력해주세요.');
+      return;
+    }
+    setIsSavingFavoritePlace(true);
     try {
       const place = await addFavoritePlace({
-        label: favoritePlaceLabel.trim() || '자주 가는 장소',
-        name: origin,
+        label: favoritePlaceLabel.trim(),
+        name: originName || origin,
         address: origin,
+        roadAddress: origin,
         longitude: originCoordinates.longitude,
         latitude: originCoordinates.latitude,
       });
       setFavoritePlaces((previous) => [place, ...previous]);
       setFavoritePlaceLabel('');
+      setFavoritePlaceSheet(null);
       Alert.alert('저장 완료', '자주 가는 장소로 저장했습니다.');
     } catch (error) {
       Alert.alert('장소 저장 실패', error instanceof Error ? error.message : '장소를 저장하지 못했습니다.');
+    } finally {
+      setIsSavingFavoritePlace(false);
+    }
+  };
+
+  const removeFavoritePlace = async (placeId: number) => {
+    setDeletingFavoritePlaceId(placeId);
+    try {
+      await deleteFavoritePlace(placeId);
+      setFavoritePlaces((previous) => previous.filter((item) => item.id !== placeId));
+    } catch (error) {
+      Alert.alert('삭제 실패', error instanceof Error ? error.message : '장소를 삭제하지 못했습니다.');
+    } finally {
+      setDeletingFavoritePlaceId(null);
     }
   };
 
@@ -868,7 +953,13 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
     '추가동행': extraCompanion,
     '컨셉': concept ?? '미식 탐방형',
     '추가조건': extras,
-    '고정핀': fixedPlaces.map((place) => place.name),
+    '고정핀': fixedPlaces.map((place) => ({
+      name: place.name,
+      longitude: place.longitude,
+      latitude: place.latitude,
+      address: place.address,
+      roadAddress: place.roadAddress,
+    })),
     '제외장소': excludedPlaces.map((place) => place.name),
     '제외조건': excludeFilters,
     '커스텀비율': useCustomRatio
@@ -911,6 +1002,21 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
       Animated.timing(favoriteTeamBackdropOpacity, { toValue: 1, duration: 220, useNativeDriver: true }),
     ]).start();
   }, [favoriteTeamModalOpen, favoriteTeamBackdropOpacity, favoriteTeamSheetY]);
+
+  useEffect(() => {
+    if (favoritePlaceSheet === null) {
+      favoritePlaceSheetY.setValue(420);
+      favoritePlaceBackdropOpacity.setValue(0);
+      return;
+    }
+
+    favoritePlaceSheetY.setValue(420);
+    favoritePlaceBackdropOpacity.setValue(0);
+    Animated.parallel([
+      Animated.timing(favoritePlaceSheetY, { toValue: 0, duration: 280, useNativeDriver: true }),
+      Animated.timing(favoritePlaceBackdropOpacity, { toValue: 1, duration: 200, useNativeDriver: true }),
+    ]).start();
+  }, [favoritePlaceBackdropOpacity, favoritePlaceSheet, favoritePlaceSheetY]);
 
   useEffect(() => {
     if (!activeTrip?.course || typeof activeTrip.course !== 'object') return;
@@ -1259,6 +1365,19 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
       Alert.alert('비율 확인', '직접 설정한 비율의 합계가 정확히 100이어야 코스를 만들 수 있습니다.');
       return;
     }
+    if (fixedPlaces.length > 0 && !stadiumCoordinates) {
+      Alert.alert('장소 확인 중', '경기장 위치를 확인하지 못했어요. 잠시 후 다시 시도해주세요.');
+      return;
+    }
+    const farPlace = stadiumCoordinates && fixedPlaces.find((place) => (
+      place.latitude == null
+      || place.longitude == null
+      || distanceInKilometers(stadiumCoordinates, { latitude: place.latitude, longitude: place.longitude }) > MAX_INCLUDED_PLACE_DISTANCE_KM
+    ));
+    if (farPlace) {
+      Alert.alert('장소를 확인해주세요', `${farPlace.name}은(는) 경기장에서 너무 멀어 포함할 수 없어요.`);
+      return;
+    }
     handleCreateCourseRequest();
   };
 
@@ -1509,43 +1628,69 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                   <Text style={styles.headerDesc}>출발지와 이동 방식을 알려주시면 최적 코스를 찾아드려요.</Text>
                 </View>
                 <ScrollView style={styles.flex1} contentContainerStyle={{ padding: 20, gap: 16 }}>
-                  <Text style={styles.inputLabel}>출발지</Text>
-                  <View style={styles.readOnlyInput}>
-                    <Navigation size={15} color="#5B44E8" />
-                    <TextInput value={originQuery} onChangeText={(value) => { setOriginQuery(value); setOrigin(''); setOriginCoordinates(null); setOriginSource(null); }} style={{ flex: 1, fontSize: 14 }} placeholder="출발지 주소나 장소를 검색하세요" />
-                  </View>
+                  <View style={styles.originSection}>
+                    <Text style={styles.originSectionLabel}>출발지</Text>
+                    {origin ? (
+                      <View style={styles.selectedOriginField}>
+                        <View style={styles.selectedOriginIcon}><Navigation size={17} color="#5B44E8" /></View>
+                        <View style={styles.selectedOriginBody}>
+                          <Text style={styles.selectedOriginName} numberOfLines={1}>{originName || origin}</Text>
+                          {originName && originName !== origin ? <Text style={styles.selectedOriginAddress} numberOfLines={1}>{origin}</Text> : null}
+                        </View>
+                        <View style={styles.selectedOriginCheck}><Check size={13} color="#FFFFFF" strokeWidth={3} /></View>
+                        <View style={styles.selectedOriginDivider} />
+                        <TouchableOpacity accessibilityLabel="출발지 다시 검색" style={styles.selectedOriginClear} onPress={clearOriginSelection}>
+                          <X size={18} color="#6B7280" />
+                        </TouchableOpacity>
+                      </View>
+                    ) : (
+                      <View style={styles.readOnlyInput}>
+                        <Navigation size={15} color="#5B44E8" />
+                        <TextInput
+                          value={originQuery}
+                          onChangeText={(value) => { setOriginQuery(value); setOriginName(''); setOrigin(''); setOriginCoordinates(null); }}
+                          style={{ flex: 1, fontSize: 14 }}
+                          placeholder="출발지 주소나 장소를 검색하세요"
+                          returnKeyType="search"
+                        />
+                      </View>
+                    )}
 
-                  {isSearchingOrigin && <ActivityIndicator color="#5B44E8" />}
-                  {originResults.length > 0 && <View style={styles.placeResultsBox}>
-                    {originResults.map((place) => <TouchableOpacity key={place.contentId} style={styles.placeResultRow} onPress={() => selectOriginPlace(place)}>
-                      <View style={styles.placeResultIcon}><MapIcon size={14} color="#5B44E8" /></View>
-                      <View style={{ flex: 1 }}><Text style={{ fontWeight: '800', fontSize: 13 }}>{place.name}</Text><Text style={styles.placeResultMeta}>{place.roadAddress || place.address || '네이버 장소 검색 결과'}</Text></View>
-                      <Text style={styles.placeSelectText}>선택</Text>
-                    </TouchableOpacity>)}
-                  </View>}
+                    {isSearchingOrigin && <ActivityIndicator color="#5B44E8" />}
+                    {originResults.length > 0 && <View style={styles.placeResultsBox}>
+                      {originResults.map((place) => <TouchableOpacity key={place.contentId} style={styles.placeResultRow} onPress={() => selectOriginPlace(place)}>
+                        <View style={styles.placeResultIcon}><MapIcon size={14} color="#5B44E8" /></View>
+                        <View style={{ flex: 1 }}><Text style={{ fontWeight: '800', fontSize: 13 }}>{place.name}</Text><Text style={styles.placeResultMeta}>{place.roadAddress || place.address || '네이버 장소 검색 결과'}</Text></View>
+                        <Text style={styles.placeSelectText}>선택</Text>
+                      </TouchableOpacity>)}
+                    </View>}
 
-                  {Boolean(origin) && <View style={styles.originSelectedCard}><Check size={14} color="#059669" /><Text style={{ flex: 1, fontSize: 12, color: '#047857', fontWeight: '700' }}>{origin}</Text></View>}
-
-                  <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-                    <TouchableOpacity style={[styles.locationActionBtn, isLocating && { opacity: 0.6 }]} onPress={handleUseCurrentLocation} disabled={isLocating}>
-                      {isLocating ? <ActivityIndicator size="small" color="#5B44E8" /> : <Navigation size={14} color="#5B44E8" />}
-                      <Text style={styles.locationActionText}>{isLocating ? '위치 확인 중...' : '현재 위치 사용'}</Text>
-                    </TouchableOpacity>
-                    {originSource === 'gps' && <View style={styles.locationVerified}><Check size={13} color="#059669" /><Text style={styles.locationVerifiedText}>GPS 위치 선택됨</Text></View>}
-                  </View>
-
-                  {favoritePlaces.length > 0 && <View style={styles.favoritePlacesBox}>
-                    <Text style={styles.favoritePlacesTitle}>자주 가는 장소</Text>
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                      {favoritePlaces.map((place) => <View key={place.id} style={styles.favoritePlaceChipRow}>
-                        <TouchableOpacity onPress={() => selectOriginPlace({ contentId: `favorite-${place.id}`, name: place.name, address: place.address, roadAddress: place.roadAddress, longitude: place.longitude, latitude: place.latitude })} style={styles.favoritePlaceChip}><Text style={styles.favoritePlaceChipText}>{place.label}</Text><Text style={styles.favoritePlaceName}>{place.name}</Text></TouchableOpacity>
-                        <TouchableOpacity onPress={async () => { try { await deleteFavoritePlace(place.id); setFavoritePlaces((previous) => previous.filter((item) => item.id !== place.id)); } catch (error) { Alert.alert('삭제 실패', error instanceof Error ? error.message : '장소를 삭제하지 못했습니다.'); } }}><X size={12} color="#6B7280" /></TouchableOpacity>
-                      </View>)}
+                    <View style={styles.favoriteCompactSection}>
+                      <View style={styles.favoriteCompactHeader}>
+                        <Text style={styles.favoriteCompactTitle}>자주 가는 장소</Text>
+                        <TouchableOpacity onPress={openFavoritePlaceSave} style={styles.favoriteAddBtn}>
+                          <Text style={styles.favoriteAddBtnText}>+ 저장</Text>
+                        </TouchableOpacity>
+                      </View>
+                      {favoritePlaces.length > 0 ? (
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.favoriteCompactList}>
+                          {favoritePlaces.map((place) => (
+                            <TouchableOpacity
+                              key={place.id}
+                              onPress={() => selectOriginPlace({ contentId: `favorite-${place.id}`, name: place.name, address: place.address, roadAddress: place.roadAddress, longitude: place.longitude, latitude: place.latitude })}
+                              style={styles.favoriteCompactChip}
+                            >
+                              <Text style={styles.favoriteCompactChipText}>{place.label}</Text>
+                            </TouchableOpacity>
+                          ))}
+                          <TouchableOpacity style={styles.favoriteManageChip} onPress={() => setFavoritePlaceSheet('manage')}>
+                            <Text style={styles.favoriteManageChipText}>관리</Text>
+                          </TouchableOpacity>
+                        </ScrollView>
+                      ) : (
+                        <Text style={styles.favoriteCompactEmpty}>자주 쓰는 출발지를 저장하면 여기에서 바로 선택할 수 있어요.</Text>
+                      )}
                     </View>
-                  </View>}
-                  <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-                    <TextInput value={favoritePlaceLabel} onChangeText={setFavoritePlaceLabel} style={[styles.favoriteLabelInput, { flex: 1 }]} placeholder="등록 이름 (예: 집)" />
-                    <TouchableOpacity style={styles.favoriteSaveBtn} onPress={saveCurrentOriginAsFavorite}><Text style={styles.favoriteSaveBtnText}>자주 가는 장소 저장</Text></TouchableOpacity>
                   </View>
 
                   <Text style={styles.inputLabel}>출발 희망 시간</Text>
@@ -1721,7 +1866,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                     { id: '관광지 중심형', desc: '랜드마크와 대표 관광지 중심', emoji: '🗺️', activeBg: '#EEF2FF', activeBorder: '#5B44E8' },
                     { id: '로컬 힐링형', desc: '한적하고 자유로운 장소 중심', emoji: '🌿', activeBg: '#ECFDF5', activeBorder: '#10B981' },
                   ].map((item) => {
-                    const active = concept === item.id;
+                    const active = !useCustomRatio && concept === item.id;
                     return (
                       <TouchableOpacity
                         key={item.id}
@@ -1744,15 +1889,17 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                   })}
 
                   <Text style={[styles.inputLabel, { marginTop: 4 }]}>비율을 따로 정하고 싶나요?</Text>
-                  <TouchableOpacity onPress={() => setUseCustomRatio((previous) => { const next = !previous; if (!next && !concept) setConcept('미식 탐방형'); return next; })} style={[styles.customRatioToggle, useCustomRatio && styles.customRatioToggleActive]}>
+                  <TouchableOpacity onPress={toggleCustomRatio} style={[styles.customRatioToggle, useCustomRatio && styles.customRatioToggleActive]}>
                     <Text style={[styles.customRatioToggleText, useCustomRatio && styles.customRatioToggleTextActive]}>직접 비율 정하기</Text>
                     <View style={[styles.radioOuter, useCustomRatio && styles.radioOuterActive]}>{useCustomRatio && <View style={[styles.radioInner, { backgroundColor: '#5B44E8' }]} />}</View>
                   </TouchableOpacity>
                   {useCustomRatio && <View style={styles.ratioInputGrid}>
                     {(['맛집', '관광지', '자연', '쇼핑'] as const).map((label) => <View key={label} style={styles.ratioInputItem}>
                       <Text style={styles.ratioInputLabel}>{label}</Text>
-                      <TextInput keyboardType="number-pad" value={customRatios[label]} onChangeText={(value) => setCustomRatios((previous) => ({ ...previous, [label]: value.replace(/[^0-9]/g, '') }))} style={styles.ratioInput} maxLength={3} />
-                      <Text style={styles.ratioPercent}>%</Text>
+                      <View style={styles.ratioInputControl}>
+                        <TextInput keyboardType="number-pad" value={customRatios[label]} onChangeText={(value) => setCustomRatios((previous) => ({ ...previous, [label]: value.replace(/[^0-9]/g, '') }))} style={styles.ratioInput} maxLength={3} />
+                        <Text style={styles.ratioPercent}>%</Text>
+                      </View>
                     </View>)}
                     <Text style={[styles.ratioTotalText, customRatioTotal > 100 && styles.transportErrorText]}>현재 비율 합계: {customRatioTotal}%{customRatioTotal > 100 ? ' · 전체 비율은 100을 넘을 수 없습니다.' : ''}</Text>
                   </View>}
@@ -1810,7 +1957,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                   <View style={{ flexDirection: 'row', gap: 8 }}>
                     <View style={styles.placeInputBox}>
                       <Coffee size={14} color="#9CA3AF" />
-                      <TextInput value={placeQuery} onChangeText={setPlaceQuery} style={{ flex: 1, fontSize: 13 }} placeholder="장소명을 입력해주세요" returnKeyType="search" />
+                      <TextInput value={placeQuery} onChangeText={(value) => { setPlaceQuery(value); setPlaceValidationMessage(null); }} style={{ flex: 1, fontSize: 13 }} placeholder="장소명을 입력해주세요" returnKeyType="search" />
                     </View>
                   </View>
 
@@ -1828,6 +1975,12 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                           <Text style={styles.placeSelectText}>선택</Text>
                         </TouchableOpacity>
                       ))}
+                    </View>
+                  )}
+                  {placeValidationMessage && (
+                    <View style={styles.placeValidationNotice} accessibilityLiveRegion="polite">
+                      <Text style={styles.placeValidationNoticeIcon}>!</Text>
+                      <Text style={styles.placeValidationNoticeText}>{placeValidationMessage}</Text>
                     </View>
                   )}
 
@@ -1908,18 +2061,17 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                   {courses.map((course, index) => {
                     const safeId = course.id ?? index;
                     const isExpanded = expandedCourseId === safeId;
-                    const isA = course.code === 'A';
                     
                     return (
-                      <View key={`course-${safeId}`} style={[styles.recCardBox, isA && styles.recCardBoxActive]}>
+                      <View key={`course-${safeId}`} style={styles.recCardBox}>
                         <View style={styles.rowBetween}>
                           <View style={styles.rowCenter}>
-                            <View style={[styles.badgeLetter, { backgroundColor: isA ? '#D97706' : '#5B44E8' }]}>
+                            <View style={[styles.badgeLetter, { backgroundColor: '#5B44E8' }]}>
                               <Text style={{ color: '#FFF', fontWeight: 'bold' }}>{course.code}</Text>
                             </View>
                             <Text style={{ fontSize: 16, fontWeight: '900' }}>{course.title}</Text>
-                            <View style={[styles.yellowTag, !isA && { backgroundColor: '#EEF2FF' }]}>
-                              <Text style={{ color: isA ? '#D97706' : '#5B44E8', fontSize: 10, fontWeight: 'bold' }}>{course.conceptTag}</Text>
+                            <View style={styles.courseConceptTag}>
+                              <Text style={{ color: '#5B44E8', fontSize: 10, fontWeight: 'bold' }}>{course.conceptTag}</Text>
                             </View>
                           </View>
                         </View>
@@ -1956,7 +2108,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                             <Text style={{ fontSize: 13, fontWeight: 'bold', color: '#4B5563' }}>{isExpanded ? '접기' : '미리보기'}</Text>
                           </TouchableOpacity>
                           <TouchableOpacity
-                            style={[styles.purpleBtn, { flex: 1, height: 42 }, isA && { backgroundColor: '#D97706' }]}
+                            style={[styles.purpleBtn, { flex: 1, height: 42 }]}
                             onPress={() => { setSelectedCourse(course); setFlow('courseDetail'); }}
                           >
                             <Text style={styles.purpleBtnText}>자세히 보기</Text>
@@ -2356,7 +2508,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
             ) : myPageSection === 'trips' ? (
               <View style={styles.flex1}><View style={styles.subPageHeader}><TouchableOpacity onPress={() => setMyPageSection('menu')}><ArrowLeft size={20} color="#6B7280" /></TouchableOpacity><Text style={styles.subPageTitle}>과거 여행 리스트</Text><View style={{ width: 20 }} /></View><ScrollView style={styles.flex1} contentContainerStyle={styles.subPageContent}><Text style={styles.subPageSectionTitle}>과거 여행 코스</Text><Text style={styles.subPageDescription}>완주한 코스를 다시 보고, 원하지 않는 기록은 삭제할 수 있어요.</Text>{completedTripList.length === 0 ? <View style={styles.emptyHistoryPanel}><Text style={styles.emptyHistoryText}>아직 완료한 여행이 없어요!</Text></View> : completedTripList.map((trip) => <TouchableOpacity key={trip.id} style={styles.historyCourseCard} onPress={() => setSelectedHistoryTrip(trip)}><View style={styles.historyIcon}><Text style={{ fontSize: 20 }}>🏟️</Text></View><View style={{ flex: 1 }}><Text style={styles.historyCourseTitle}>{trip.courseTitle ?? '추천 여행 코스'}</Text><Text style={styles.historyCourseRoute}>{trip.stadium}{trip.matchName ? ` · ${trip.matchName}` : ''}</Text><View style={styles.historyMetaRow}><Text style={styles.historyMeta}>{trip.tripDate ?? new Date(trip.createdAt).toLocaleDateString()}</Text><Text style={styles.historyRating}>★ {trip.rating ?? '-'}</Text></View></View><ChevronRight size={18} color="#9CA3AF" /></TouchableOpacity>)}</ScrollView></View>
             ) : (
-              <View style={styles.flex1}><View style={styles.subPageHeader}><TouchableOpacity onPress={() => setMyPageSection('menu')}><ArrowLeft size={20} color="#6B7280" /></TouchableOpacity><Text style={styles.subPageTitle}>고객 지원</Text><View style={{ width: 20 }} /></View><ScrollView style={styles.flex1} contentContainerStyle={styles.subPageContent}><Text style={styles.subPageSectionTitle}>무엇을 도와드릴까요?</Text><TouchableOpacity style={styles.supportCard} onPress={() => setExpandedSupportItem(expandedSupportItem === 'guide' ? null : 'guide')}><View style={styles.supportCardHeader}><Text style={{ fontSize: 24 }}>💬</Text><View style={{ flex: 1 }}><Text style={styles.supportTitle}>스포바이저 이용 안내</Text><Text style={styles.supportText}>경기 선택부터 여행 코스 생성까지 한눈에 확인해보세요.</Text></View><ChevronDown size={18} color="#6B7280" /></View>{expandedSupportItem === 'guide' && <View style={styles.supportDetail}><Text style={styles.supportDetailTitle}>스포바이저는 이렇게 이용해요</Text><Text style={styles.supportDetailText}>1. 홈에서 경기 날짜와 응원하는 경기를 선택해요.\n2. 출발지, 이동수단, 동행자와 여행 컨셉을 정해요.\n3. 꼭 들르고 싶은 장소나 제외할 장소를 추가할 수 있어요.\n4. AI가 만든 3개 코스를 비교한 뒤 자세히 보고 마음에 드는 코스를 확정해요.\n5. 확정한 코스는 코스 탭에서 24시간 동안 확인할 수 있고, 완주하면 과거 여행 리스트에 기록돼요.</Text><View style={styles.supportTip}><Text style={styles.supportTipText}>TIP  ·  구단 설정에서 관심 구단을 등록하면 홈에서 해당 팀 경기만 모아볼 수 있어요.</Text></View></View>}</TouchableOpacity><TouchableOpacity style={styles.supportCard} onPress={() => setExpandedSupportItem(expandedSupportItem === 'contact' ? null : 'contact')}><View style={styles.supportCardHeader}><Text style={{ fontSize: 24 }}>✉️</Text><View style={{ flex: 1 }}><Text style={styles.supportTitle}>문의하기</Text><Text style={styles.supportText}>서비스 이용 중 문제가 있으면 편하게 알려주세요.</Text></View><ChevronDown size={18} color="#6B7280" /></View>{expandedSupportItem === 'contact' && <View style={styles.supportDetail}><Text style={styles.supportDetailTitle}>문의 접수 안내</Text><Text style={styles.supportDetailText}>오류 화면, 사용 중인 메뉴, 문제가 발생한 시간을 함께 알려주시면 더 빠르게 확인할 수 있어요.</Text><View style={styles.contactInfoBox}><Text style={styles.contactInfoLabel}>시연용 문의 채널</Text><Text style={styles.contactInfoValue}>support@spovisor.example</Text><Text style={styles.supportDetailText}>답변은 영업일 기준 1~2일 안에 드릴게요.</Text></View></View>}</TouchableOpacity></ScrollView></View>
+              <View style={styles.flex1}><View style={styles.subPageHeader}><TouchableOpacity onPress={() => setMyPageSection('menu')}><ArrowLeft size={20} color="#6B7280" /></TouchableOpacity><Text style={styles.subPageTitle}>고객 지원</Text><View style={{ width: 20 }} /></View><ScrollView style={styles.flex1} contentContainerStyle={styles.subPageContent}><Text style={styles.subPageSectionTitle}>무엇을 도와드릴까요?</Text><TouchableOpacity style={styles.supportCard} onPress={() => setExpandedSupportItem(expandedSupportItem === 'guide' ? null : 'guide')}><View style={styles.supportCardHeader}><Text style={{ fontSize: 24 }}>💬</Text><View style={{ flex: 1 }}><Text style={styles.supportTitle}>스포바이저 이용 안내</Text><Text style={styles.supportText}>경기 선택부터 여행 코스 생성까지 한눈에 확인해보세요.</Text></View><ChevronDown size={18} color="#6B7280" /></View>{expandedSupportItem === 'guide' && <View style={styles.supportDetail}><Text style={styles.supportDetailTitle}>스포바이저는 이렇게 이용해요</Text><Text style={styles.supportDetailText}>1. 홈에서 경기 날짜와 응원하는 경기를 선택해요. 2. 출발지, 이동수단, 동행자와 여행 컨셉을 정해요. 3. 꼭 들르고 싶은 장소나 제외할 장소를 추가할 수 있어요. 4. AI가 만든 3개의 코스를 비교한 뒤 자세히 보고 마음에 드는 코스를 확정해요. 5. 확정한 코스는 코스 탭에서 24시간 동안 확인할 수 있고, 완주하면 과거 여행 리스트에 기록돼요.</Text><View style={styles.supportTip}><Text style={styles.supportTipText}>TIP  ·  구단 설정에서 관심 구단을 등록하면 홈에서 해당 팀 경기만 모아볼 수 있어요.</Text></View></View>}</TouchableOpacity><TouchableOpacity style={styles.supportCard} onPress={() => setExpandedSupportItem(expandedSupportItem === 'contact' ? null : 'contact')}><View style={styles.supportCardHeader}><Text style={{ fontSize: 24 }}>✉️</Text><View style={{ flex: 1 }}><Text style={styles.supportTitle}>문의하기</Text><Text style={styles.supportText}>서비스 이용 중 문제가 있으면 편하게 알려주세요.</Text></View><ChevronDown size={18} color="#6B7280" /></View>{expandedSupportItem === 'contact' && <View style={styles.supportDetail}><Text style={styles.supportDetailTitle}>문의 접수 안내</Text><Text style={styles.supportDetailText}>오류 화면, 사용 중인 메뉴, 문제가 발생한 시간을 함께 알려주시면 더 빠르게 확인할 수 있어요.</Text><View style={styles.contactInfoBox}><Text style={styles.contactInfoLabel}>문의 채널</Text><Text style={styles.contactInfoValue}>support@spovisor.example</Text><Text style={styles.supportDetailText}>답변은 영업일 기준 1~2일 안에 드릴게요.</Text></View></View>}</TouchableOpacity></ScrollView></View>
             )}
           </>
         )}
@@ -2368,6 +2520,103 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
           <Text style={styles.homeNoticeText}>{homeNotice}</Text>
         </View>
       )}
+
+      <Modal
+        visible={favoritePlaceSheet !== null}
+        transparent
+        animationType="none"
+        onRequestClose={() => !isSavingFavoritePlace && setFavoritePlaceSheet(null)}
+      >
+        <View style={[styles.modalOverlay, styles.favoritePlaceModalOverlay]}>
+          <Animated.View
+            pointerEvents="none"
+            style={[styles.favoritePlaceBackdrop, { opacity: favoritePlaceBackdropOpacity }]}
+          />
+          <TouchableOpacity
+            style={styles.modalBackdropTouch}
+            activeOpacity={1}
+            onPress={() => !isSavingFavoritePlace && setFavoritePlaceSheet(null)}
+          />
+          <Animated.View
+            style={{ width: '100%', alignSelf: 'flex-end', transform: [{ translateY: favoritePlaceSheetY }] }}
+          >
+            <View style={styles.favoritePlaceSheetContainer}>
+            <View style={styles.modalDragHandle} />
+            {favoritePlaceSheet === 'save' ? (
+              <>
+                <Text style={styles.modalTitle}>자주 가는 장소 저장</Text>
+                <Text style={styles.favoritePlaceSheetDescription}>선택한 출발지를 알아보기 쉬운 이름으로 저장해보세요.</Text>
+                <View style={styles.favoriteCurrentPlace}>
+                  <Navigation size={16} color="#5B44E8" />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.favoriteCurrentPlaceName} numberOfLines={1}>{originName || origin}</Text>
+                    {originName && originName !== origin ? <Text style={styles.favoriteCurrentPlaceAddress} numberOfLines={1}>{origin}</Text> : null}
+                  </View>
+                </View>
+                <Text style={styles.favoritePlaceSheetLabel}>저장 이름</Text>
+                <View style={styles.favoriteLabelPresets}>
+                  {['집', '학교', '회사'].map((label) => (
+                    <TouchableOpacity
+                      key={label}
+                      style={[styles.favoriteLabelPreset, favoritePlaceLabel === label && styles.favoriteLabelPresetActive]}
+                      onPress={() => setFavoritePlaceLabel(label)}
+                    >
+                      <Text style={[styles.favoriteLabelPresetText, favoritePlaceLabel === label && styles.favoriteLabelPresetTextActive]}>{label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <TextInput
+                  value={favoritePlaceLabel}
+                  onChangeText={setFavoritePlaceLabel}
+                  style={styles.favoritePlaceSheetInput}
+                  placeholder="직접 입력 (예: 본가)"
+                  maxLength={30}
+                />
+                <View style={styles.modalButtonRow}>
+                  <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setFavoritePlaceSheet(null)} disabled={isSavingFavoritePlace}>
+                    <Text style={styles.modalCancelText}>취소</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.modalSaveBtn, (!favoritePlaceLabel.trim() || isSavingFavoritePlace) && { opacity: 0.5 }]}
+                    onPress={saveCurrentOriginAsFavorite}
+                    disabled={!favoritePlaceLabel.trim() || isSavingFavoritePlace}
+                  >
+                    {isSavingFavoritePlace ? <ActivityIndicator color="#FFF" /> : <Text style={styles.purpleBtnText}>저장</Text>}
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : (
+              <>
+                <Text style={styles.modalTitle}>자주 가는 장소 관리</Text>
+                <Text style={styles.favoritePlaceSheetDescription}>저장한 장소를 확인하거나 삭제할 수 있어요.</Text>
+                <ScrollView style={styles.favoriteManageList} showsVerticalScrollIndicator={false}>
+                  {favoritePlaces.map((place) => (
+                    <View key={place.id} style={styles.favoriteManageRow}>
+                      <View style={styles.favoriteManageIcon}><Navigation size={15} color="#5B44E8" /></View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.favoriteManageLabel}>{place.label}</Text>
+                        <Text style={styles.favoriteManageAddress} numberOfLines={1}>{place.roadAddress || place.address || place.name}</Text>
+                      </View>
+                      <TouchableOpacity
+                        accessibilityLabel={`${place.label} 삭제`}
+                        style={styles.favoriteDeleteBtn}
+                        onPress={() => removeFavoritePlace(place.id)}
+                        disabled={deletingFavoritePlaceId !== null}
+                      >
+                        {deletingFavoritePlaceId === place.id ? <ActivityIndicator size="small" color="#EF4444" /> : <Text style={styles.favoriteDeleteBtnText}>삭제</Text>}
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </ScrollView>
+                <TouchableOpacity style={styles.purpleBtn} onPress={() => setFavoritePlaceSheet(null)}>
+                  <Text style={styles.purpleBtnText}>완료</Text>
+                </TouchableOpacity>
+              </>
+            )}
+            </View>
+          </Animated.View>
+        </View>
+      </Modal>
 
       <Modal visible={activeTripPromptOpen} transparent animationType="fade" onRequestClose={() => setActiveTripPromptOpen(false)}>
         <View style={styles.modalOverlay}>
@@ -2675,21 +2924,48 @@ const styles = StyleSheet.create({
   chipText: { fontSize: 13, fontWeight: '600', color: '#6B7280' },
   chipActiveText: { color: '#FFFFFF', fontWeight: 'bold' },
 
-  locationChip: { backgroundColor: '#FFF', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, borderWidth: 1, borderColor: '#E2E8F0' },
-  locationActionBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 9, borderRadius: 20, backgroundColor: '#EEF2FF', borderWidth: 1, borderColor: '#C7D2FE' },
-  locationActionText: { fontSize: 12, color: '#5B44E8', fontWeight: '800' },
-  locationVerified: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 9, borderRadius: 20, backgroundColor: '#ECFDF5' },
-  locationVerifiedText: { fontSize: 11, color: '#059669', fontWeight: '700' },
-  originSelectedCard: { flexDirection: 'row', alignItems: 'center', gap: 6, padding: 10, borderRadius: 10, backgroundColor: '#ECFDF5' },
-  favoritePlacesBox: { padding: 12, borderRadius: 12, backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0' },
-  favoritePlacesTitle: { fontSize: 12, fontWeight: '800', color: '#374151', marginBottom: 8 },
-  favoritePlaceChipRow: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 9, paddingVertical: 7, borderRadius: 12, backgroundColor: '#FFF', borderWidth: 1, borderColor: '#E2E8F0' },
-  favoritePlaceChip: { gap: 1 },
-  favoritePlaceChipText: { fontSize: 11, color: '#5B44E8', fontWeight: '800' },
-  favoritePlaceName: { fontSize: 10, color: '#6B7280', maxWidth: 120 },
-  favoriteLabelInput: { height: 42, borderRadius: 10, borderWidth: 1, borderColor: '#E2E8F0', paddingHorizontal: 10, backgroundColor: '#FFF', fontSize: 12 },
-  favoriteSaveBtn: { paddingHorizontal: 11, paddingVertical: 8, borderRadius: 10, backgroundColor: '#5B44E8' },
-  favoriteSaveBtnText: { color: '#FFF', fontSize: 11, fontWeight: '800' },
+  originSection: { gap: 10 },
+  originSectionLabel: { fontSize: 12, fontWeight: 'bold', color: '#0F0E1A' },
+  selectedOriginField: { minHeight: 62, borderRadius: 14, backgroundColor: '#FFFFFF', paddingLeft: 12, paddingRight: 8, flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 1.5, borderColor: '#C7D2FE' },
+  selectedOriginIcon: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#EEF2FF', justifyContent: 'center', alignItems: 'center' },
+  selectedOriginBody: { flex: 1, gap: 2 },
+  selectedOriginName: { fontSize: 14, fontWeight: '900', color: '#111827' },
+  selectedOriginAddress: { fontSize: 11, color: '#6B7280' },
+  selectedOriginCheck: { width: 22, height: 22, borderRadius: 11, backgroundColor: '#22A06B', justifyContent: 'center', alignItems: 'center' },
+  selectedOriginDivider: { width: 1, height: 28, backgroundColor: '#E2E8F0' },
+  selectedOriginClear: { width: 32, height: 40, justifyContent: 'center', alignItems: 'center' },
+  favoriteCompactSection: { gap: 8, paddingTop: 2 },
+  favoriteCompactHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  favoriteCompactTitle: { fontSize: 12, fontWeight: '800', color: '#374151' },
+  favoriteAddBtn: { paddingHorizontal: 4, paddingVertical: 4 },
+  favoriteAddBtnText: { color: '#5B44E8', fontSize: 12, fontWeight: '900' },
+  favoriteCompactList: { gap: 8, paddingRight: 16 },
+  favoriteCompactChip: { height: 36, minWidth: 58, paddingHorizontal: 14, borderRadius: 18, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E2E8F0', justifyContent: 'center', alignItems: 'center' },
+  favoriteCompactChipText: { color: '#374151', fontSize: 12, fontWeight: '800' },
+  favoriteManageChip: { height: 36, paddingHorizontal: 14, borderRadius: 18, backgroundColor: '#EEF2FF', borderWidth: 1, borderColor: '#C7D2FE', justifyContent: 'center', alignItems: 'center' },
+  favoriteManageChipText: { color: '#5B44E8', fontSize: 12, fontWeight: '900' },
+  favoriteCompactEmpty: { color: '#9CA3AF', fontSize: 11, lineHeight: 16 },
+  favoritePlaceModalOverlay: { backgroundColor: 'transparent', ...StyleSheet.absoluteFill, zIndex: 110, elevation: 110 },
+  favoritePlaceBackdrop: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(15, 23, 42, 0.16)' },
+  favoritePlaceSheetContainer: { width: '100%', flexShrink: 0, backgroundColor: '#FFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingTop: 20, paddingHorizontal: 20, paddingBottom: 90, marginBottom: -60, zIndex: 2, elevation: 8 },
+  favoritePlaceSheetDescription: { marginTop: 6, color: '#6B7280', fontSize: 12, lineHeight: 18 },
+  favoriteCurrentPlace: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12, marginTop: 16, borderRadius: 12, backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0' },
+  favoriteCurrentPlaceName: { color: '#111827', fontSize: 13, fontWeight: '900' },
+  favoriteCurrentPlaceAddress: { color: '#6B7280', fontSize: 11, marginTop: 2 },
+  favoritePlaceSheetLabel: { color: '#374151', fontSize: 12, fontWeight: '800', marginTop: 18, marginBottom: 8 },
+  favoriteLabelPresets: { flexDirection: 'row', gap: 8 },
+  favoriteLabelPreset: { height: 34, paddingHorizontal: 16, borderRadius: 17, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#FFF', justifyContent: 'center', alignItems: 'center' },
+  favoriteLabelPresetActive: { borderColor: '#5B44E8', backgroundColor: '#EEF2FF' },
+  favoriteLabelPresetText: { color: '#6B7280', fontSize: 12, fontWeight: '800' },
+  favoriteLabelPresetTextActive: { color: '#5B44E8' },
+  favoritePlaceSheetInput: { height: 46, marginTop: 10, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', paddingHorizontal: 14, backgroundColor: '#FFF', color: '#111827', fontSize: 13 },
+  favoriteManageList: { maxHeight: 300, marginTop: 14, marginBottom: 14 },
+  favoriteManageRow: { minHeight: 58, flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' },
+  favoriteManageIcon: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#EEF2FF', justifyContent: 'center', alignItems: 'center' },
+  favoriteManageLabel: { color: '#111827', fontSize: 13, fontWeight: '900' },
+  favoriteManageAddress: { color: '#6B7280', fontSize: 11, marginTop: 2 },
+  favoriteDeleteBtn: { minWidth: 46, height: 32, borderRadius: 9, backgroundColor: '#FEF2F2', justifyContent: 'center', alignItems: 'center' },
+  favoriteDeleteBtnText: { color: '#EF4444', fontSize: 11, fontWeight: '900' },
   transportErrorText: { color: '#DC2626', fontSize: 11, fontWeight: '700' },
 
   outlineBtn: { flex: 1, height: 48, borderRadius: 12, borderWidth: 1.5, borderColor: '#E2E8F0', justifyContent: 'center', alignItems: 'center', backgroundColor: '#FFF' },
@@ -2717,10 +2993,11 @@ const styles = StyleSheet.create({
   customRatioToggleText: { fontSize: 13, fontWeight: '700', color: '#6B7280' },
   customRatioToggleTextActive: { color: '#5B44E8' },
   ratioInputGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, padding: 12, borderRadius: 12, backgroundColor: '#F8FAFC' },
-  ratioInputItem: { width: '47%', flexDirection: 'row', alignItems: 'center', gap: 5 },
-  ratioInputLabel: { width: 38, fontSize: 12, fontWeight: '700', color: '#374151' },
-  ratioInput: { flex: 1, height: 38, borderRadius: 8, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#FFF', textAlign: 'right', paddingHorizontal: 8 },
-  ratioPercent: { fontSize: 12, color: '#6B7280' },
+  ratioInputItem: { flexBasis: '47%', flexGrow: 1, minWidth: 128, gap: 6 },
+  ratioInputLabel: { fontSize: 12, fontWeight: '700', color: '#374151' },
+  ratioInputControl: { minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  ratioInput: { minWidth: 0, flex: 1, height: 38, borderRadius: 8, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#FFF', textAlign: 'right', paddingHorizontal: 8 },
+  ratioPercent: { flexShrink: 0, fontSize: 12, color: '#6B7280' },
   ratioTotalText: { width: '100%', fontSize: 11, color: '#6B7280', fontWeight: '700' },
 
   pillChip: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, borderWidth: 1.5, borderColor: '#5B44E8', backgroundColor: '#FFF' },
@@ -2735,6 +3012,9 @@ const styles = StyleSheet.create({
   ratioMain: { fontSize: 13, fontWeight: '900', marginTop: 2 },
 
   placeInputBox: { flex: 1, height: 44, borderRadius: 8, backgroundColor: '#FFF', paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderColor: '#E2E8F0' },
+  placeValidationNotice: { minHeight: 42, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, backgroundColor: '#FFF7ED', borderWidth: 1, borderColor: '#FED7AA' },
+  placeValidationNoticeIcon: { width: 18, height: 18, borderRadius: 9, backgroundColor: '#F97316', color: '#FFF', textAlign: 'center', lineHeight: 18, fontSize: 12, fontWeight: '900' },
+  placeValidationNoticeText: { flex: 1, color: '#C2410C', fontSize: 12, fontWeight: '700', lineHeight: 18 },
   addBtn: { backgroundColor: '#5B44E8', paddingHorizontal: 16, borderRadius: 8, justifyContent: 'center' },
   addBtnText: { color: '#FFF', fontWeight: 'bold', fontSize: 12 },
   placeItemCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#F1F5F9', gap: 10 },
@@ -2756,10 +3036,8 @@ const styles = StyleSheet.create({
   aiTag: { backgroundColor: '#EEF2FF', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, alignSelf: 'flex-start', marginBottom: 4 },
   condPill: { backgroundColor: '#F1F5F9', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12 },
   recCardBox: { backgroundColor: '#FFF', padding: 16, borderRadius: 16, borderWidth: 1, borderColor: '#E2E8F0' },
-  recCardBoxActive: { backgroundColor: '#FEFCE8', borderColor: '#F59E0B', borderWidth: 2 },
   badgeLetter: { width: 24, height: 24, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
-  yellowTag: { backgroundColor: '#FEF3C7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, marginLeft: 6 },
-  checkedCircleOrange: { width: 20, height: 20, borderRadius: 10, backgroundColor: '#D97706', justifyContent: 'center', alignItems: 'center' },
+  courseConceptTag: { backgroundColor: '#EEF2FF', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, marginLeft: 6 },
   tagPillGrey: { backgroundColor: '#F1F5F9', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
   expandDescBox: { backgroundColor: '#FFFBEB', padding: 12, borderRadius: 12, marginBottom: 12 },
   previewBtn: { height: 42, paddingHorizontal: 16, borderRadius: 12, backgroundColor: '#F1F5F9', justifyContent: 'center', alignItems: 'center' },
@@ -2871,7 +3149,7 @@ const styles = StyleSheet.create({
   dropdownTrigger: { height: 52, borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   dropdownMenu: { borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10, marginTop: 6, backgroundColor: '#FFF', maxHeight: 220, overflow: 'hidden', zIndex: 5, elevation: 5 },
   dropdownItem: { paddingHorizontal: 14, paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' },
-  modalButtonRow: { flexDirection: 'row', gap: 10, marginTop: 18, flexShrink: 0 },
+  modalButtonRow: { width: '100%', alignSelf: 'stretch', flexDirection: 'row', gap: 10, marginTop: 18, flexShrink: 0 },
   modalCancelBtn: { flex: 1, height: 50, borderRadius: 24, backgroundColor: '#F1F5F9', justifyContent: 'center', alignItems: 'center' },
   modalCancelText: { color: '#6B7280', fontSize: 14, fontWeight: '800' },
   modalSaveBtn: { flex: 1, height: 50, borderRadius: 24, backgroundColor: '#5B44E8', justifyContent: 'center', alignItems: 'center' },

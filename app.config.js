@@ -37,7 +37,6 @@ export default {
       ],
       "expo-font",
       "expo-web-browser",
-      "expo-location",
       [
         "@mj-studio/react-native-naver-map",
         {
