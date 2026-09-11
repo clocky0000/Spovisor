@@ -135,6 +135,7 @@ interface CourseSpot {
   visited?: boolean;
   map_x?: string | null;
   map_y?: string | null;
+  day?: number;
 }
 
 interface Course {
@@ -1115,6 +1116,9 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
 
   const handleCreateCourseRequest = async () => {
     setIsSubmitting(true);
+    setCourses([]);
+    setExpandedCourseId(1);
+
     try {
       const survey = buildSurvey();
       await saveUserSurvey(survey);
@@ -1163,21 +1167,20 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                     label: t
                   }));
 
-                  // 2. 동선 텍스트 만들기 (A ➔ B ➔ C)
-                  const routeStr = (c.spots || []).map((s: any) => s.name).join(' ➔ ');
-
-                  // 3. 세부 장소 변환
-                  const mappedSpots: CourseSpot[] = (c.spots || []).map((s: any, sIdx: number, sArr: any[]) => ({
-                    id: Number(`${c.course_id}${sIdx}`),
+                  const mappedSpots: CourseSpot[] = (c.days || []).flatMap((day: any) => (day.spots || []).map((s: any, sIdx: number) => ({
+                    id:Number(`${c.course_id || index}${day.day}$${sIdx}`),
                     name: s.name,
                     category: s.category || '장소',
-                    time: '', // AI 응답에 시간이 없으므로 비워둡니다
+                    time: s.arrival_time || '',
                     emoji: getEmoji(s.category),
                     description: s.category || '추천 장소',
                     visited: false,
                     map_x: s.map_x,
                     map_y: s.map_y,
-                  }));
+                    day: day.day,
+                  })));
+
+                  const routeStr = mappedSpots.map(s => s.name).join(' ➔ ');
 
                   return {
                     id: c.course_id || index,
@@ -1664,6 +1667,13 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                         <Text style={styles.placeSelectText}>선택</Text>
                       </TouchableOpacity>)}
                     </View>}
+
+                    <View style={{ backgroundColor: '#EEF2FF', padding: 12, borderRadius: 12, marginTop: -4, marginBottom: 12, borderWidth: 1, borderColor: '#C7D2FE' }}>
+                      <Text style={{ fontSize: 11, fontWeight: '800', color: '#5B44E8', marginBottom: 2 }}>💡 원정 경기 관람 팁</Text>
+                      <Text style={{ fontSize: 11, color: '#4B5563', lineHeight: 16 }}>
+                        집 주소가 아닌, 경기 지역에 도착해서 <Text style={{ fontWeight: 'bold', color: '#111827' }}>여행을 시작하는 장소(예: 동대구역)</Text>와 <Text style={{ fontWeight: 'bold', color: '#111827' }}>시작 시간</Text>을 적어주시면 훨씬 정확한 코스가 만들어져요!
+                      </Text>
+                    </View>
 
                     <View style={styles.favoriteCompactSection}>
                       <View style={styles.favoriteCompactHeader}>
@@ -2189,29 +2199,37 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                   <Text style={styles.bottomSheetTitleCenter}>날짜별 동선을 지도에서 확인</Text>
 
                   <ScrollView style={styles.flex1} contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
-                    {selectedCourse.spots.map((spot, idx, arr) => (
-                      <View key={`timeline-${idx}`} style={styles.timelineItemRow}>
-                        
-                        <View style={styles.timelineLeftCol}>
-                          <View style={styles.timelineOrangePin}>
-                            <Text style={styles.timelinePinTextWhite}>{idx + 1}</Text>
-                          </View>
-                          {idx < arr.length - 1 && <View style={styles.timelineVerticalLineSolid} />}
-                        </View>
+                    {selectedCourse.spots.map((spot, idx, arr) => {
+                      const isFirstOfNewDay = idx === 0 || spot.day !== arr[idx-1].day;
 
-                        <View style={styles.timelineContentColNew}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                            <Text style={styles.categoryTextGreyNew}>{spot.category || '장소'}</Text>
-                            <Text style={styles.timelineItemTitleLargeNew}>{spot.name}</Text>
-                          </View>
-                          
-                          <Text style={styles.timelineItemDescGreyNew}>추천 테마: {spot.category}</Text>
+                      return ((
+                        <React.Fragment key={`timeline-${idx}`}>
+                          {isFirstOfNewDay && spot.day && (
+                            <View style={{ marginTop: idx === 0 ? 0 : 20, marginBottom: 16,backgroundColor: '#EEF2FF', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, alignSelf: 'flex-start' }}>
+                              <Text style={{ fontSize: 13, fontWeight: '900', color: '#5B44E8' }}>DAY {spot.day}</Text>
+                            </View>
+                          )}
 
-                          {/* 카테고리에 따라 갤러리 렌더링 */}
-                          {(spot.category.includes('음식') || spot.category.includes('맛집') || spot.category.includes('카페') || spot.category.includes('관광') || spot.category.includes('쇼핑')) && renderSpotImages(spot)}
-                        </View>
-                      </View>
-                    ))}
+                          <View style={styles.timelineItemRow}>
+                            <View style={styles.timelineLeftCol}>
+                              <View style={styles.timelineOrangePin}>
+                                <Text style={styles.timelinePinTextWhite}>{idx + 1}</Text>
+                              </View>
+                              {idx < arr.length - 1 && <View style={styles.timelineVerticalLineSolid} />}
+                            </View>
+
+                            <View style={styles.timelineContentColNew}>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                <Text style={styles.categoryTextGreyNew}>{spot.category || '장소'}</Text>
+                                <Text style={styles.timelineItemTitleLargeNew}>{spot.name}</Text>
+                              </View>
+                              <Text style={styles.timelineItemDescGreyNew}>추천 테마: {spot.category}</Text>
+                              {(spot.category.includes('음식') || spot.category.includes('맛집') || spot.category.includes('카페') || spot.category.includes('관광') || spot.category.includes('쇼핑')) && renderSpotImages(spot)}
+                            </View>
+                          </View>
+                        </React.Fragment>
+                      ))
+                    })}
                   </ScrollView>
 
                   {/* 하단 고정 액션 버튼 */}
