@@ -117,59 +117,30 @@ def resolve_ratio(survey, concept):
 # ── 사용자 벡터 생성 ───────────────────────────
 
 def build_user_vec(survey: dict) -> dict:
-    """
-    프론트엔드 설문 응답을 받아 벡터 + 메타 정보로 변환
-
-    Parameters
-    ----------
-    survey : dict
-        {
-            "경기장":       "수원KT위즈파크",
-            "여행_방식":    "경기 전",
-            "이동방식":     "대중교통+도보",  # "자차+도보" / "도보 단독"
-            "최대이동시간": "1시간",
-            "동행":         "친구와 여행",
-            "추가동행":     [],
-            "컨셉":         "미식 탐방형",
-            "추가조건":     ["혼잡 피하기"],
-            "최대이동시간": "1시간",           # "30분"/"1시간"/"1시간 30분"/"2시간"/"3시간"
-            "걷는거리":     "20분 이내",       # "10분 이내"/"20분 이내"/"30분 이내"/"상관없음"
-            "고정핀":       ["경복궁"],        # 꼭 넣고 싶은 장소
-            "제외장소":     ["롯데월드몰"],     # 피하고 싶은 장소
-            "제외조건":     [],
-            "커스텀비율":   {"맛집": 30, "관광지": 40, "자연": 0, "쇼핑": 30}  # 선택사항
-        }
-    """
     concept = survey.get("컨셉", "관광지 중심형")
     base    = CONCEPT_VEC.get(concept, CONCEPT_VEC["관광지 중심형"]).copy()
     vec     = {dim: base[i] for i, dim in enumerate(DIMS)}
 
-    # 동행 보정
     companion = survey.get("동행", "")
     if companion in COMPANION_ADJUST:
         for dim, delta in COMPANION_ADJUST[companion].items():
             vec[dim] = vec.get(dim, 0) + delta
 
-    # 추가 조건 보정
     for extra in survey.get("추가조건", []):
         if extra in EXTRA_ADJUST:
             for dim, delta in EXTRA_ADJUST[extra].items():
                 vec[dim] = vec.get(dim, 0) + delta
 
-    # 혼잡선호 클램핑
     vec["혼잡선호"] = max(-1.0, min(1.0, vec["혼잡선호"]))
 
-    # 정규화 (혼잡선호 제외)
     main_dims = [d for d in DIMS if d != "혼잡선호"]
     total     = sum(abs(vec[d]) for d in main_dims)
     if total > 0:
         for dim in main_dims:
             vec[dim] /= total
 
-    # 비율 결정 (커스텀 or 컨셉 기본값)
     ratio = resolve_ratio(survey, concept)
 
-    # 경기장 도착 마감 시간 계산
     game_time      = survey.get("경기시간", "")
     arrive_before  = survey.get("도착희망시간", "1시간 전")
     arrive_minutes = ARRIVE_BEFORE_MINUTES.get(arrive_before, 60)
@@ -219,24 +190,14 @@ def build_user_vec(survey: dict) -> dict:
 # ── 후보 필터링 ────────────────────────────────
 
 def filter_candidates(user_result, spots, relations):
-    """
-    장소 후보를 점수 순으로 정렬해 반환
-    점수 = 코사인유사도 + 우선카테고리보너스(0.15) + 순위보너스(최대0.05) - 혼잡도패널티
+    user_vec          = user_result["vector"]
+    meta              = user_result["meta"]
+    concept           = meta.get("concept", "관광지 중심형")
+    exclude_cats      = meta["exclude_categories"]
+    exclude_spots     = meta.get("exclude_spots", [])
+    selected_api_name = meta.get("selected_api_name", "")
+    signgu_cd         = spots[0]["signgu_cd"] if spots else None
 
-    제외 처리:
-    - exclude_categories: 카테고리 단위 제외
-    - exclude_spots:      장소명 단위 제외 (피하고 싶은 장소)
-    """
-    user_vec         = user_result["vector"]
-    meta             = user_result["meta"]
-    concept          = meta.get("concept", "관광지 중심형")
-    exclude_cats     = meta["exclude_categories"]
-    exclude_spots    = meta.get("exclude_spots", [])
-    max_walk_minutes = meta.get("max_walk_minutes", 999)
-    selected_api_name = meta.get("selected_api_name", "")  # 선택한 경기장 API명
-    signgu_cd        = spots[0]["signgu_cd"] if spots else None
-
-    # 다른 경기장 제외할 키워드
     STADIUM_KW = ["야구장","축구장","경기장","체육관","아레나","돔","스타디움","볼파크","스틸야드","운동장","풋살"]
 
     # 연관 관광지에서 음식 장소 추가
@@ -256,7 +217,7 @@ def filter_candidates(user_result, spots, relations):
                     "signgu_cd":  signgu_cd,
                     "lcls_nm":    "관광지",
                     "mcls_nm":    "음식",
-                    "map_x":      r.get("map_x"),   # recommend.py에서 주입한 좌표
+                    "map_x":      r.get("map_x"),
                     "map_y":      r.get("map_y"),
                     "hub_rank":   r.get("rlte_rank", "50"),
                     "vector":     build_spot_vec("기타관광"),
@@ -271,7 +232,7 @@ def filter_candidates(user_result, spots, relations):
         and s["spot_name"] not in exclude_spots
     ]
 
-    # 좌표 없는 장소 제외 (경기장 강제추가 장소는 예외)
+    # 좌표 없는 장소 제외 (경기장/고정핀 강제추가 장소는 예외)
     all_pool = [
         s for s in all_pool
         if (s.get("map_x") and s.get("map_y"))
@@ -286,38 +247,8 @@ def filter_candidates(user_result, spots, relations):
         or s["spot_name"] == selected_api_name
     ]
 
-    # 걷는 거리 필터 (경기장 좌표 기준 haversine 거리 계산)
-    # 도보 평균 속도 4km/h 기준
-    stadium_lat = meta.get("stadium_lat")
-    stadium_lng = meta.get("stadium_lng")
-
-    if max_walk_minutes < 999 and stadium_lat and stadium_lng:
-        import math
-        max_dist_km = (max_walk_minutes / 60) * 4
-
-        def haversine(lat1, lng1, lat2, lng2):
-            R = 6371
-            dlat = math.radians(lat2 - lat1)
-            dlng = math.radians(lng2 - lng1)
-            a = (math.sin(dlat/2)**2
-                 + math.cos(math.radians(lat1))
-                 * math.cos(math.radians(lat2))
-                 * math.sin(dlng/2)**2)
-            return R * 2 * math.asin(math.sqrt(a))
-
-        def is_within_walk(spot):
-            if not spot.get("map_x") or not spot.get("map_y"):
-                return True  # 좌표 없으면 통과
-            try:
-                dist = haversine(
-                    stadium_lat, stadium_lng,
-                    float(spot["map_y"]), float(spot["map_x"])
-                )
-                return dist <= max_dist_km
-            except Exception:
-                return True
-
-        all_pool = [s for s in all_pool if is_within_walk(s)]
+    # ② 최대이동시간/걷는거리 제약 제거 (장소 수 부족 문제로 비활성화)
+    # 추후 경기장 기준 최대 반경(km) 제한으로 대체 예정
 
     # 미식 탐방형이라도 기타관광 제외 안 함
     # (TourAPI가 식당/카페를 기타관광으로 분류하는 경우가 많음)
@@ -336,10 +267,8 @@ def filter_candidates(user_result, spots, relations):
 
     scored.sort(key=lambda x: x[0], reverse=True)
 
-    # 방법 2: 매 요청마다 다른 랜덤 시드
     random.seed()
 
-    # 방법 1: 점수 차이 0.05 이내는 동등 그룹으로 셔플
     if scored:
         top_score = scored[0][0]
         top_group = [s for score, s in scored if top_score - score <= 0.05]
@@ -349,15 +278,19 @@ def filter_candidates(user_result, spots, relations):
     else:
         scored_spots = [spot for _, spot in scored]
 
-    # 같은 브랜드명 1개만 허용 (슬래시 앞 브랜드명 기준)
     def get_brand(name):
         return name.split("/")[0].strip()
 
+    # ① 고정핀/경기장 강제추가 장소는 브랜드 중복 제거에서 예외
     seen_brands = set()
     result      = []
     for spot in scored_spots:
+        is_forced = (
+            spot.get("content_id", "").startswith("pin_") or
+            spot.get("content_id", "").startswith("stadium_")
+        )
         brand = get_brand(spot["spot_name"])
-        if brand in seen_brands:
+        if not is_forced and brand in seen_brands:
             continue
         seen_brands.add(brand)
         result.append(spot)
@@ -380,7 +313,6 @@ def build_course(user_result, candidates, n=5):
     max_spots  = meta["max_spots"]
     n          = min(n, max_spots)
 
-    # 비율 → 장소 수 계산
     total    = sum(ratio.values())
     food_n   = round(n * ratio.get("맛집",   0) / total)
     tour_n   = round(n * ratio.get("관광지", 0) / total)
@@ -393,7 +325,6 @@ def build_course(user_result, candidates, n=5):
         food_n -= 1
         shop_n += 1
 
-    # 카테고리별 후보 분리
     food_pool   = [s for s in candidates if s["mcls_nm"] in RATIO_CATEGORY_MAP["맛집"]]
     tour_pool   = [s for s in candidates if s["mcls_nm"] in RATIO_CATEGORY_MAP["관광지"]]
     nature_pool = [s for s in candidates if s["mcls_nm"] in RATIO_CATEGORY_MAP["자연"]]
@@ -422,27 +353,22 @@ def build_course(user_result, candidates, n=5):
             if s["mcls_nm"] in RATIO_CATEGORY_MAP["맛집"]:
                 groups["음식"].append(s)
             else:
-                groups["관광"].append(s)  # 관광+쇼핑+자연 모두 비음식 그룹
+                groups["관광"].append(s)
 
         result = []
         food_q = groups["음식"]
         tour_q = groups["관광"]
         fi, ti = 0, 0
 
-        # 음식 연속 최대 1개 강제
-        # 관광지 부족하면 쇼핑/자연도 관광 그룹에 포함됐으므로 그대로 교대
         while fi < len(food_q) or ti < len(tour_q):
             last_cat     = result[-1]["mcls_nm"] if result else None
             last_is_food = last_cat in RATIO_CATEGORY_MAP["맛집"] if last_cat else False
 
             if not last_is_food and fi < len(food_q):
-                # 직전이 음식 아니면 음식 배치
                 result.append(food_q[fi]); fi += 1
             elif ti < len(tour_q):
-                # 관광 배치
                 result.append(tour_q[ti]); ti += 1
             elif fi < len(food_q):
-                # 관광 다 소진되면 음식 나머지 배치
                 result.append(food_q[fi]); fi += 1
 
         return result
@@ -460,7 +386,6 @@ def build_course(user_result, candidates, n=5):
                         p.remove(pin)
                 break
 
-    # 카테고리별 강제 배분
     food_picked = pick_best(food_pool, course, food_n)
     used = set(s["spot_name"] for s in course)
     used.update(s["spot_name"] for s in food_picked)
@@ -473,7 +398,6 @@ def build_course(user_result, candidates, n=5):
 
     shop_picked = pick_best([s for s in shop_pool if s["spot_name"] not in used], course, shop_n)
 
-    # 고정핀 제외한 나머지 카테고리 교대 배치
     rest = food_picked + tour_picked + nature_picked + shop_picked
     rest = interleave_categories(rest)
 
@@ -554,13 +478,11 @@ def mmr_courses(user_result, candidates, k=3, n=5):
 
     def get_stadium_pin():
         """고정핀 중 경기장 찾기 (selected_api_name 우선)"""
-        # selected_api_name으로 직접 찾기
         if selected_api_name:
             pin = next((s for s in candidates if s["spot_name"] == selected_api_name), None)
             if pin:
                 print(f"    [디버그] 경기장 핀 찾음: {pin['spot_name']}")
                 return pin
-        # 고정핀에서 경기장 키워드 포함 장소 찾기
         for pin_name in fixed_pins:
             pin = next((s for s in candidates if pin_name in s["spot_name"]), None)
             if pin and is_stadium(pin):
@@ -576,7 +498,7 @@ def mmr_courses(user_result, candidates, k=3, n=5):
             return course + [stadium_spot]
         elif trip_timing == "경기 후":
             return [stadium_spot] + course
-        else:  # 전후 모두
+        else:
             mid = len(course) // 2
             return course[:mid] + [stadium_spot] + course[mid:]
 
@@ -587,25 +509,20 @@ def mmr_courses(user_result, candidates, k=3, n=5):
     used_shop_names = set()
 
     for c_idx in range(k):
-        # 각 코스마다 풀 복사 (고정핀 제거 반영을 위해)
         f_pool   = list(food_pool)
         t_pool   = list(tour_pool)
         nat_pool = list(nature_pool)
         s_pool   = list(shop_pool)
 
         course = []
-
-        # 고정핀 먼저 추가
         course = add_fixed_pins(course, f_pool, t_pool, nat_pool, s_pool)
 
-        # 고정핀 카테고리 차감
         pin_names    = {s["spot_name"] for s in course}
         cur_food_n   = food_n   - sum(1 for s in course if s["mcls_nm"] in RATIO_CATEGORY_MAP["맛집"])
         cur_tour_n   = tour_n   - sum(1 for s in course if s["mcls_nm"] in RATIO_CATEGORY_MAP["관광지"])
         cur_nature_n = nature_n - sum(1 for s in course if s["mcls_nm"] in RATIO_CATEGORY_MAP["자연"])
         cur_shop_n   = shop_n   - sum(1 for s in course if s["mcls_nm"] in RATIO_CATEGORY_MAP["쇼핑"])
 
-        # 카테고리별 장소 선택
         food_picked = pick_best(
             f_pool, course, cur_food_n,
             exclude=used_food_names | pin_names if c_idx > 0 else pin_names
@@ -632,9 +549,8 @@ def mmr_courses(user_result, candidates, k=3, n=5):
             shop_picked = pick_best(s_pool, course, cur_shop_n, exclude=used_now)
         used_shop_names.update(s["spot_name"] for s in shop_picked)
 
-        # 음식-비음식 교대 배치 (음식 연속 최대 1개)
         from collections import defaultdict
-        pin_spots = list(course)  # 고정핀만
+        pin_spots = list(course)
         rest      = food_picked + tour_picked + nat_picked + shop_picked
 
         groups = defaultdict(list)
@@ -648,11 +564,9 @@ def mmr_courses(user_result, candidates, k=3, n=5):
         food_q = groups["음식"]
         tour_q = groups["관광"]
         fi, ti = 0, 0
-        # 음식-관광 교대: 음식 먼저 시작, 연속 방지
         while fi < len(food_q) or ti < len(tour_q):
             last_cat = interleaved[-1]["mcls_nm"] if interleaved else None
             last_is_food = last_cat in RATIO_CATEGORY_MAP["맛집"] if last_cat else False
-
             if not last_is_food and fi < len(food_q):
                 interleaved.append(food_q[fi]); fi += 1
             elif ti < len(tour_q):
@@ -666,10 +580,26 @@ def mmr_courses(user_result, candidates, k=3, n=5):
         seen   = set()
         course = [s for s in course if not (s["spot_name"] in seen or seen.add(s["spot_name"]))]
 
+        # ③ 이전 코스와 장소가 너무 겹치면 비음식 장소 교체 시도
+        if courses:
+            prev_names = set(s["spot_name"] for s in courses[-1])
+            cur_names  = {s["spot_name"] for s in course}
+            overlap    = len(prev_names & cur_names) / max(len(prev_names | cur_names), 1)
+            if overlap > 0.5:
+                non_overlap = [
+                    s for s in t_pool + s_pool
+                    if s["spot_name"] not in prev_names
+                    and s["spot_name"] not in cur_names
+                ]
+                if non_overlap:
+                    for i, s in enumerate(course):
+                        if s["spot_name"] in prev_names and s["mcls_nm"] not in RATIO_CATEGORY_MAP["맛집"]:
+                            course[i] = non_overlap[0]
+                            break
+
         # 경기장 위치 조정 (자르기 전에 먼저 삽입)
         stadium_pin = get_stadium_pin()
         if stadium_pin:
-            # 경기장 제외하고 n-1개로 자른 뒤 경기장 삽입
             course_no_stadium = [s for s in course if s["spot_name"] != stadium_pin["spot_name"]]
             course = insert_stadium(course_no_stadium[:n-1], stadium_pin)
         else:
@@ -724,14 +654,6 @@ def generate_summary(course, city, concept):
 # ── 피드백 반영 ────────────────────────────────
 
 def apply_feedback(user_result, liked_spots=[], disliked_spots=[], lr=0.05):
-    """
-    좋아요/싫어요를 사용자 벡터에 즉각 반영 (세션 내 유효)
-
-    Parameters
-    ----------
-    lr : float
-        학습률. 너무 크면 벡터가 한쪽으로 쏠림 (기본값 0.05)
-    """
     vec  = list(user_result["vector"])
     meta = user_result["meta"]
 
@@ -757,23 +679,17 @@ def apply_feedback(user_result, liked_spots=[], disliked_spots=[], lr=0.05):
 # ── 시간 배정 ──────────────────────────────────
 
 def assign_times(course, start_time, transport, game_deadline=None, game_spot_name=None):
-    """
-    코스 장소들에 도착/출발 시간 배정
-    경기 전 코스: 경기장 도착 마감 시간 초과 장소 자동 제거
-    """
     current = parse_time(start_time) if start_time else parse_time("09:00")
     if not current:
         current = parse_time("09:00")
 
     deadline_dt = parse_time(game_deadline) if game_deadline else None
 
-    # 경기 전 코스: 경기장 이전 장소들이 마감 안에 들어오도록 필터링
     if deadline_dt and game_spot_name:
         stadium_idx = next(
             (i for i, s in enumerate(course) if s["spot_name"] == game_spot_name), None
         )
         if stadium_idx is not None:
-            # 경기장 이전 장소들 시간 시뮬레이션
             valid_before = []
             sim_time = current
             for i in range(stadium_idx):
@@ -796,12 +712,9 @@ def assign_times(course, start_time, transport, game_deadline=None, game_spot_na
                 else:
                     print(f"  [시간 초과] '{spot['spot_name']}' 제외 (끝나는 시간: {format_time(end_time)}, 마감: {game_deadline})")
 
-            # 경기 전: 경기장 이후 장소 제거 (경기장이 마지막)
-            # 경기 후: 경기장 이후 장소 유지
             after_stadium = course[stadium_idx+1:]
             course = valid_before + [course[stadium_idx]] + after_stadium
 
-    # 시간 배정
     result = []
     for i, spot in enumerate(course):
         if i > 0:
@@ -815,7 +728,6 @@ def assign_times(course, start_time, transport, game_deadline=None, game_spot_na
             )
             current = current + timedelta(minutes=travel)
 
-        # 경기장 도착 마감 강제 조정
         if deadline_dt and spot["spot_name"] == game_spot_name:
             if current > deadline_dt:
                 current = deadline_dt
@@ -838,11 +750,6 @@ def assign_times(course, start_time, transport, game_deadline=None, game_spot_na
 # ── 날짜별 코스 생성 ───────────────────────────
 
 def build_daily_courses(user_result, candidates, game_spot_name):
-    """
-    여행기간에 따라 날짜별 코스 생성
-    경기 있는 날: 경기장 포함 + 시간 제한
-    경기 없는 날: 일반 코스
-    """
     meta          = user_result["meta"]
     trip_days     = meta["trip_days"]
     trip_timing   = meta["trip_timing"]
@@ -850,10 +757,8 @@ def build_daily_courses(user_result, candidates, game_spot_name):
     depart_time   = meta["depart_time"]
     game_time     = meta["game_time"]
     game_deadline = meta["game_deadline"]
-    consecutive   = meta["consecutive_games"]  # ["2026-06-30 14:00", ...]
+    consecutive   = meta["consecutive_games"]
 
-    # 날짜별 경기 시간 파싱
-    # day 1 = 메인 경기, 이후 consecutive_games
     game_by_day = {}
     game_by_day[1] = {"time": game_time, "deadline": game_deadline}
 
@@ -861,7 +766,7 @@ def build_daily_courses(user_result, candidates, game_spot_name):
         parts = g.split(" ")
         if len(parts) == 2:
             g_time     = parts[1]
-            g_deadline = sub_minutes(g_time, 60)  # 기본 1시간 전
+            g_deadline = sub_minutes(g_time, 60)
             game_by_day[i + 2] = {"time": g_time, "deadline": g_deadline}
 
     daily_courses = []
@@ -871,8 +776,6 @@ def build_daily_courses(user_result, candidates, game_spot_name):
         day_game   = game_by_day.get(day, {})
         day_timing = trip_timing if day == 1 else ("경기 전" if has_game else "없음")
 
-        # 하루 코스 생성
-        # 경기 없는 날은 max_spots 그대로, 경기 있는 날은 경기장 포함
         day_user_result = {
             "vector": user_result["vector"],
             "meta": {
@@ -888,12 +791,11 @@ def build_daily_courses(user_result, candidates, game_spot_name):
 
         course = build_course(day_user_result, candidates, n=meta["max_spots"])
 
-        # 시간 배정
         course_with_time = assign_times(
             course,
-            start_time   = depart_time,
-            transport    = transport,
-            game_deadline= day_game.get("deadline") if has_game else None,
+            start_time     = depart_time,
+            transport      = transport,
+            game_deadline  = day_game.get("deadline") if has_game else None,
             game_spot_name = game_spot_name if has_game else None,
         )
 
@@ -909,10 +811,6 @@ def build_daily_courses(user_result, candidates, game_spot_name):
 
 
 def build_multi_day_courses(user_result, candidates, game_spot_name, k=3):
-    """
-    대안 코스 k개 × 날짜별 코스 생성
-    각 대안 코스는 mmr_courses로 다양하게 생성
-    """
     meta          = user_result["meta"]
     trip_days     = meta["trip_days"]
     trip_timing   = meta["trip_timing"]
@@ -922,7 +820,6 @@ def build_multi_day_courses(user_result, candidates, game_spot_name, k=3):
     game_deadline = meta["game_deadline"]
     consecutive   = meta["consecutive_games"]
 
-    # 날짜별 경기 시간
     game_by_day = {}
     if game_time:
         game_by_day[1] = {"time": game_time, "deadline": game_deadline}
@@ -936,14 +833,12 @@ def build_multi_day_courses(user_result, candidates, game_spot_name, k=3):
     def get_brand(name):
         return name.split("/")[0].strip()
 
-    # k개 대안: mmr_courses로 다양한 1일차 코스 생성
     day1_courses = mmr_courses(user_result, candidates, k=k, n=meta["max_spots"])
 
     alt_courses = []
 
     for alt_idx, base_course in enumerate(day1_courses):
         daily_courses = []
-        # 1일차 사용 장소/브랜드
         used_spots  = {s["spot_name"] for s in base_course}
         used_brands = {get_brand(s["spot_name"]) for s in base_course}
 
@@ -968,15 +863,12 @@ def build_multi_day_courses(user_result, candidates, game_spot_name, k=3):
             if day == 1:
                 day_course = list(base_course)
             else:
-                # 2일차 이후: 1일차 장소/브랜드 제외 + alt별로 다르게
-                # 경기 없는 날은 경기장도 후보에서 제외
                 day_candidates = [
                     s for s in candidates
                     if s["spot_name"] not in used_spots
                     and get_brand(s["spot_name"]) not in used_brands
                     and (has_game or s["spot_name"] != game_spot_name)
                 ]
-                # alt별 다양성: 후보 일부 셔플
                 import random
                 if alt_idx > 0 and day_candidates:
                     shuffle_n = max(1, len(day_candidates) // 3)
@@ -987,13 +879,11 @@ def build_multi_day_courses(user_result, candidates, game_spot_name, k=3):
 
                 day_course = build_course(day_user_result, day_candidates, n=meta["max_spots"])
 
-                # 2일차 사용 장소/브랜드도 누적
                 used_spots.update(s["spot_name"] for s in day_course
                                   if s["spot_name"] != game_spot_name)
                 used_brands.update(get_brand(s["spot_name"]) for s in day_course
                                    if s["spot_name"] != game_spot_name)
 
-            # 경기장 위치 조정
             if has_game:
                 stadium = next((s for s in day_course if s["spot_name"] == game_spot_name), None)
                 if stadium:
@@ -1006,7 +896,6 @@ def build_multi_day_courses(user_result, candidates, game_spot_name, k=3):
                         mid = len(day_course) // 2
                         day_course = day_course[:mid] + [stadium] + day_course[mid:]
 
-            # 시간 배정
             course_with_time = assign_times(
                 day_course,
                 start_time     = depart_time,
