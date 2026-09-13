@@ -1,3 +1,4 @@
+import { NaverMapMarkerOverlay, NaverMapView } from '@mj-studio/react-native-naver-map';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import {
@@ -63,15 +64,6 @@ import {
   type UserProfile,
 } from '../lib/api';
 import { OFFICIAL_GAMES, type ScheduleGame } from '../schedule';
-
-// 💡 웹에서는 네이버 지도를 아예 안 읽도록 조건부로 불러옵니다.
-let NaverMapView: any, Marker: any, Path: any;
-if (Platform.OS !== 'web') {
-  const NaverMap = require('@mj-studio/react-native-naver-map');
-  NaverMapView = NaverMap.NaverMapView;
-  Marker = NaverMap.Marker;
-  Path = NaverMap.Path;
-}
 
 // ─────────────────────────────────────────────────────────
 // Types
@@ -547,6 +539,7 @@ const stepStyles = StyleSheet.create({
 // ─────────────────────────────────────────────────────────
 
 export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initialUser: UserProfile }) {
+  console.log("MainApp 컴포넌트 렌더링 시작! selectedCourse:", selectedCourse);
   const [tab, setTab] = useState<TabType>('home');
   const [flow, setFlow] = useState<FlowStep>('home');
   const [profile, setProfile] = useState<UserProfile>(initialUser);
@@ -2444,7 +2437,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                           </TouchableOpacity>
                           <TouchableOpacity
                             style={[styles.purpleBtn, { flex: 1, height: 42 }]}
-                            onPress={() => { setSelectedCourse(course); setFlow('courseDetail'); }}
+                            onPress={() => { console.log("선택된 코스 데이터", course); setSelectedCourse(course); setFlow('courseDetail'); }}
                           >
                             <Text style={styles.purpleBtnText}>자세히 보기</Text>
                           </TouchableOpacity>
@@ -2503,17 +2496,19 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                     >
                       {selectedCourse.spots
                         .filter((spot) => spot.map_x != null && spot.map_y != null && spot.map_x !== '' && spot.map_y !== '')
-                        .map((spot, idx) => (
-                        <Marker
-                          key={`marker-${spot.id}-${idx}`}
-                          coordinate={{ 
-                            latitude: Number(spot.map_y), 
-                            longitude: Number(spot.map_x) 
-                          }}
-                          caption={{ text: `${idx + 1}. ${spot.name}` }}
-                          pinColor="#5B44E8"
-                        />
-                      ))}
+                        .map((spot, idx) => {
+                          if (!spot.map_x || !spot.map_y) return null;
+                          return (
+                            <NaverMapMarkerOverlay
+                              key={`marker-${spot.id}-${idx}`}
+                              latitude={Number(spot.map_y)}
+                              longitude={Number(spot.map_x)}
+                              image={{ symbol: 'blue' }}
+                              caption={{ text: `${idx + 1}. ${spot.name}` }}
+                              tintColor="#5B44E8"
+                            />
+                          );
+                        })}
                     </NaverMapView>
                   )}
                 </View>
@@ -2701,17 +2696,19 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                     >
                       {selectedCourse.spots
                         .filter((spot) => spot.map_x != null && spot.map_y != null && spot.map_x !== '' && spot.map_y !== '')
-                        .map((spot, idx) => (
-                        <Marker
-                          key={`marker-${spot.id}-${idx}`}
-                          coordinate={{ 
-                            latitude: Number(spot.map_y), 
-                            longitude: Number(spot.map_x) 
-                          }}
-                          caption={{ text: `${idx + 1}. ${spot.name}` }}
-                          pinColor="#5B44E8"
-                        />
-                      ))}
+                        .map((spot, idx) => {
+                          if (!spot.map_x || !spot.map_y) return null;
+
+                          return (
+                            <NaverMapMarkerOverlay
+                              key={`marker-${spot.id}-${idx}`}
+                              latitude={Number(spot.map_y)}
+                              longitude={Number(spot.map_x)}
+                              caption={{ text: `${idx + 1}. ${spot.name}` }}
+                              tintColor="#5B44E8"
+                            />
+                          );
+                        })}
                     </NaverMapView>
                   )}
                 </View>
