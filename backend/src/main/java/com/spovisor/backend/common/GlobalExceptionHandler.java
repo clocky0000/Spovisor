@@ -4,6 +4,7 @@ import com.spovisor.backend.auth.DuplicateEmailException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -33,6 +34,12 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> illegalArgument(IllegalArgumentException exception) {
         return ResponseEntity.badRequest()
                 .body(new ErrorResponse("INVALID_REQUEST", exception.getMessage()));
+    }
+
+    @ExceptionHandler(HttpClientErrorException.TooManyRequests.class)
+    public ResponseEntity<ErrorResponse> tooManyRequests() {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .body(new ErrorResponse("IMAGE_SEARCH_RATE_LIMITED", "이미지 검색 요청이 많습니다. 잠시 후 다시 시도해주세요."));
     }
 
     public record ErrorResponse(String code, String message) {

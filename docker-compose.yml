@@ -36,6 +36,7 @@ services:
       JWT_SECRET: change-this-local-secret-to-a-long-random-value-123456789
       NAVER_CLIENT_ID: ${NAVER_CLIENT_ID}
       NAVER_CLIENT_SECRET: ${NAVER_CLIENT_SECRET}
+      TOUR_API_SERVICE_KEY: ${TOUR_API_SERVICE_KEY}
       AI_SERVER_URL: http://ai:5000
     ports:
       - "8080:8080"

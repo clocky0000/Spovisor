@@ -28,6 +28,8 @@ app:
     local:
       client-id: ${NAVER_CLIENT_ID:}
       client-secret: ${NAVER_CLIENT_SECRET:}
+  tour-api:
+    service-key: ${TOUR_API_SERVICE_KEY:}
 
 logging:
   level:

@@ -60,6 +60,7 @@ public class TripHistory {
     public LocalDateTime getExpiresAt() { return expiresAt; }
 
     public void markExpired() { this.status = "EXPIRED"; }
+    public void updateCourseJson(String courseJson) { this.courseJson = courseJson; }
 
     public void addFeedback(Integer rating, String visitedSpotIds) {
         this.rating = rating;
