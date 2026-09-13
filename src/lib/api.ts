@@ -60,6 +60,12 @@ export type SpotImageSearchResult = {
   sourceUrl?: string;
 };
 
+export type SpotImageBatchResult = {
+  spotId: number;
+  source: 'TOUR_API' | 'NAVER' | 'NONE';
+  images: SpotImageSearchResult[];
+};
+
 export type FavoriteTeam = { id?: number; sport: string; teamName: string; nickname?: string | null };
 export type FavoritePlace = {
   id: number;
@@ -150,6 +156,7 @@ export function deleteSavedCourse(id: number) { return request<void>(`/courses/s
 export function listTrips() { return request<Trip[]>('/trips'); }
 export function createTrip(body: { stadium: string; matchName?: string; tripDate?: string; courseTitle?: string; course?: unknown }) { return request<Trip>('/trips', { method: 'POST', body }); }
 export function submitTripFeedback(id: number, rating: number, visitedSpotIds: number[]) { return request<Trip>(`/trips/${id}/feedback`, { method: 'PATCH', body: { rating, visitedSpotIds } }); }
+export function saveTripImageSnapshot(id: number, imageUrlsBySpotId: Record<string, string[]>) { return request<Trip>(`/trips/${id}/image-snapshot`, { method: 'PATCH', body: { imageUrlsBySpotId } }); }
 export function deleteTrip(id: number) { return request<void>(`/trips/${id}`, { method: 'DELETE' }); }
 export function createRecommendationRequest(survey: unknown) { return request<{ requestId: number; status: string }>('/recommendations/requests', { method: 'POST', body: { survey } }); }
 export function searchSpots(query: string) {
@@ -157,6 +164,15 @@ export function searchSpots(query: string) {
 }
 export function searchSpotImages(query: string) {
   return request<SpotImageSearchResult[]>(`/spots/images?q=${encodeURIComponent(query.trim())}`);
+}
+export function searchCourseSpotImages(
+  spots: { id: number; name: string; category?: string; longitude?: number; latitude?: number }[],
+  cacheSessionId?: string,
+) {
+  return request<SpotImageBatchResult[]>('/spots/images/batch', { method: 'POST', body: { cacheSessionId, spots } });
+}
+export function clearCourseSpotImageCache(cacheSessionId: string) {
+  return request<void>(`/spots/images/cache/${encodeURIComponent(cacheSessionId)}`, { method: 'DELETE' });
 }
 export function getRecommendationRequestStatus(requestId: number) {
   return request<{ requestId: number; status: string; resultJson?: string; createdAt: string }>(`/recommendations/requests/${requestId}`);
