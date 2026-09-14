@@ -4,12 +4,15 @@ import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.annotation.PreDestroy;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.util.UriComponentsBuilder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.text.Normalizer;
 import java.net.URI;
@@ -30,12 +33,14 @@ import java.util.concurrent.TimeUnit;
 
 @Service
 public class SpotSearchService {
+    private static final Logger log = LoggerFactory.getLogger(SpotSearchService.class);
     private static final long IMAGE_REQUEST_INTERVAL_MILLIS = 250L;
     private static final long IMAGE_CACHE_TTL_MILLIS = 6L * 60L * 60L * 1_000L;
     private static final long TOUR_SESSION_CACHE_TTL_MILLIS = 30L * 60L * 1_000L;
-    private static final String NAVER_IMAGE_CACHE_VERSION = "v2";
+    private static final String NAVER_IMAGE_CACHE_VERSION = "v4-place-relevance";
     private static final int MAX_BATCH_SPOTS = 100;
     private static final int NAVER_IMAGE_CANDIDATE_COUNT = 20;
+    private static final int FACE_FILTER_CANDIDATE_COUNT = 12;
     private static final int TOUR_LOCATION_PAGE_SIZE = 1_000;
     private static final double TOUR_CLUSTER_DISTANCE_METERS = 15_000d;
     private static final double TOUR_MAX_RADIUS_METERS = 20_000d;
@@ -61,11 +66,23 @@ public class SpotSearchService {
             "nocutnews.co.kr", "ohmynews.com", "ytn.co.kr", "sbs.co.kr",
             "kbs.co.kr", "imbc.com", "jtbc.co.kr", "etnews.com", "zdnet.co.kr",
             "imgnews.naver.net", "ruliweb.com", "namu.wiki", "dbscthumb-phinf.pstatic.net",
-            "image.aladin.co.kr", "dl.nanet.go.kr"
+            "image.aladin.co.kr", "dl.nanet.go.kr", "play-lh.googleusercontent.com",
+            "yt3.googleusercontent.com", "clogo.saramin.co.kr"
+    );
+    private static final Set<String> NON_PHOTO_TITLE_TERMS = Set.of(
+            "google play", "youtube", "유튜브", "로고", "아이콘", "앱 다운로드",
+            "썸네일", "프로필", "스톡 이미지", "일러스트", "클립아트"
+    );
+    private static final Set<String> LODGING_TITLE_TERMS = Set.of(
+            "호텔", "모텔", "숙소", "객실", "펜션", "리조트", "게스트하우스", "숙박 예약"
+    );
+    private static final Set<String> FOOD_TITLE_TERMS = Set.of(
+            "맛집", "먹거리", "메뉴", "뷔페", "레스토랑", "식당", "카페", "치킨", "피자", "만두"
     );
 
     private final RestClient naverRestClient;
     private final RestClient tourRestClient;
+    private final RestClient aiRestClient;
     private final String clientId;
     private final String clientSecret;
     private final String tourApiServiceKey;
@@ -83,7 +100,8 @@ public class SpotSearchService {
             RestClient.Builder restClientBuilder,
             @Value("${app.naver.local.client-id:}") String clientId,
             @Value("${app.naver.local.client-secret:}") String clientSecret,
-            @Value("${app.tour-api.service-key:}") String tourApiServiceKey
+            @Value("${app.tour-api.service-key:}") String tourApiServiceKey,
+            @Value("${ai.server.url:http://localhost:5000}") String aiServerUrl
     ) {
         this.naverRestClient = restClientBuilder.clone()
                 .baseUrl("https://openapi.naver.com")
@@ -95,6 +113,14 @@ public class SpotSearchService {
         this.tourRestClient = restClientBuilder.clone()
                 .baseUrl("https://apis.data.go.kr/B551011/KorService2")
                 .requestFactory(tourRequestFactory)
+                .build();
+
+        SimpleClientHttpRequestFactory aiRequestFactory = new SimpleClientHttpRequestFactory();
+        aiRequestFactory.setConnectTimeout(Duration.ofSeconds(3));
+        aiRequestFactory.setReadTimeout(Duration.ofSeconds(30));
+        this.aiRestClient = restClientBuilder.clone()
+                .baseUrl(aiServerUrl.replaceAll("/+$", ""))
+                .requestFactory(aiRequestFactory)
                 .build();
 
         this.clientId = clientId;
@@ -243,6 +269,7 @@ public class SpotSearchService {
         if (clientId.isBlank() || clientSecret.isBlank()) {
             throw new IllegalStateException("네이버 검색 API 인증 정보가 설정되지 않았습니다.");
         }
+        if (isClearlyNonPhysicalSpot(normalized)) return List.of();
 
         String searchQuery = buildNaverImageQuery(normalized, regionHint, category);
         String cacheKey = NAVER_IMAGE_CACHE_VERSION + "|" + normalizeName(searchQuery);
@@ -282,7 +309,7 @@ public class SpotSearchService {
             if (imageUrl.isBlank() && thumbnailUrl.isBlank()) continue;
             int width = item.path("sizewidth").asInt(0);
             int height = item.path("sizeheight").asInt(0);
-            if (isBlockedNaverImage(normalized, title, imageUrl, width, height)) continue;
+            if (isBlockedNaverImage(normalized, title, imageUrl, width, height, category)) continue;
             String identity = imageUrl.isBlank() ? thumbnailUrl : imageUrl;
             if (!seenImages.add(identity)) continue;
             candidates.add(new NaverImageCandidate(
@@ -305,9 +332,11 @@ public class SpotSearchService {
                     candidate.thumbnailUrl(),
                     candidate.title()
             ));
-            if (results.size() == 3) break;
+            if (results.size() == FACE_FILTER_CANDIDATE_COUNT) break;
         }
-        List<SpotImageResponse> immutableResults = List.copyOf(results);
+        List<SpotImageResponse> immutableResults = keepImagesWithoutFaces(results).stream()
+                .limit(3)
+                .toList();
         imageCache.put(cacheKey, new CachedImages(
                 immutableResults,
                 System.currentTimeMillis() + IMAGE_CACHE_TTL_MILLIS
@@ -408,7 +437,7 @@ public class SpotSearchService {
                     .queryParam("MobileApp", "Spovisor")
                     .queryParam("_type", "json")
                     .queryParam("pageNo", 1)
-                    .queryParam("numOfRows", 3)
+                    .queryParam("numOfRows", FACE_FILTER_CANDIDATE_COUNT)
                     .queryParam("contentId", place.contentId())
                     .queryParam("imageYN", "Y")
                     .build()
@@ -437,11 +466,55 @@ public class SpotSearchService {
         }
 
         Set<String> seen = new LinkedHashSet<>();
-        return results.stream()
+        List<SpotImageResponse> uniqueResults = results.stream()
                 .filter(image -> !image.imageUrl().isBlank())
                 .filter(image -> seen.add(image.imageUrl()))
+                .toList();
+        return keepImagesWithoutFaces(uniqueResults).stream()
                 .limit(3)
                 .toList();
+    }
+
+    private List<SpotImageResponse> keepImagesWithoutFaces(List<SpotImageResponse> candidates) {
+        if (candidates.isEmpty()) return List.of();
+
+        List<String> urls = candidates.stream()
+                .map(SpotSearchService::faceCheckUrl)
+                .filter(url -> !url.isBlank())
+                .distinct()
+                .limit(FACE_FILTER_CANDIDATE_COUNT)
+                .toList();
+        if (urls.isEmpty()) return List.of();
+
+        try {
+            JsonNode response = aiRestClient.post()
+                    .uri("/images/filter-no-faces")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of("urls", urls))
+                    .retrieve()
+                    .body(JsonNode.class);
+            if (response == null || !response.path("safeUrls").isArray()) return List.of();
+
+            Set<String> safeUrls = new LinkedHashSet<>();
+            response.path("safeUrls").forEach(node -> {
+                String url = node.asText("").trim();
+                if (!url.isBlank()) safeUrls.add(url);
+            });
+            return candidates.stream()
+                    .filter(candidate -> safeUrls.contains(faceCheckUrl(candidate)))
+                    .toList();
+        } catch (RestClientException | IllegalStateException exception) {
+            // 검증되지 않은 이미지를 노출하는 것보다 사진을 생략하는 쪽이 안전하다.
+            log.warn("얼굴 포함 여부를 확인하지 못해 이미지 후보를 제외합니다: {}", exception.getMessage());
+            return List.of();
+        }
+    }
+
+    private static String faceCheckUrl(SpotImageResponse image) {
+        if (image.thumbnailUrl() != null && !image.thumbnailUrl().isBlank()) {
+            return image.thumbnailUrl().trim();
+        }
+        return image.imageUrl() == null ? "" : image.imageUrl().trim();
     }
 
     private JsonNode requestNaverImagesWithRateLimit(String uri) {
@@ -494,7 +567,7 @@ public class SpotSearchService {
         return normalizeName(spot.name()) + "|" + longitude + "|" + latitude;
     }
 
-    private static String buildNaverImageQuery(String name, String regionHint, String category) {
+    static String buildNaverImageQuery(String name, String regionHint, String category) {
         List<String> parts = new ArrayList<>();
         String searchableName = name.trim()
                 .replaceAll("[/|·,()\\[\\]_-]+", " ")
@@ -508,13 +581,41 @@ public class SpotSearchService {
                 || categoryText.contains("쇼핑");
         String searchRegion = commercialPlace
                 ? compactRegionHint(regionHint)
-                : regionHint == null ? "" : regionHint.trim();
+                : isDistinctiveLandmarkName(searchableName) ? "" : regionHint == null ? "" : regionHint.trim();
         if (!searchRegion.isBlank()) parts.add(searchRegion);
 
         if (categoryText.contains("카페")) parts.add("카페");
         else if (categoryText.contains("음식") || categoryText.contains("맛집")) parts.add("음식");
         else if (categoryText.contains("쇼핑")) parts.add("매장");
+        else parts.add("전경");
         return String.join(" ", parts);
+    }
+
+    private static boolean isDistinctiveLandmarkName(String name) {
+        return name.endsWith("역")
+                || name.contains("경기장")
+                || name.contains("스타디움")
+                || name.contains("라이온즈파크")
+                || name.contains("구장")
+                || name.contains("스카이돔")
+                || name.contains("체육관")
+                || name.contains("박물관")
+                || name.contains("미술관")
+                || name.contains("문화공간")
+                || name.contains("수목원")
+                || name.endsWith("공원");
+    }
+
+    static boolean isClearlyNonPhysicalSpot(String name) {
+        String normalized = normalizeName(name);
+        boolean remote = normalized.contains("원격")
+                || normalized.contains("온라인")
+                || normalized.contains("사이버");
+        boolean education = normalized.contains("교육원")
+                || normalized.contains("학원")
+                || normalized.contains("아카데미")
+                || normalized.contains("학교");
+        return remote && education;
     }
 
     private static String compactRegionHint(String regionHint) {
@@ -527,15 +628,24 @@ public class SpotSearchService {
         return localRegion;
     }
 
-    private static boolean isBlockedNaverImage(
+    static boolean isBlockedNaverImage(
             String spotName,
             String title,
             String imageUrl,
             int width,
-            int height
+            int height,
+            String category
     ) {
         String normalizedTitle = title == null ? "" : title.toLowerCase(Locale.ROOT);
         if (BLOCKED_NAVER_TITLE_TERMS.stream().anyMatch(normalizedTitle::contains)) return true;
+        if (NON_PHOTO_TITLE_TERMS.stream().anyMatch(normalizedTitle::contains)) return true;
+        String categoryText = category == null ? "" : category;
+        boolean accommodation = categoryText.contains("숙박");
+        boolean foodPlace = categoryText.contains("카페")
+                || categoryText.contains("음식")
+                || categoryText.contains("맛집");
+        if (!accommodation && LODGING_TITLE_TERMS.stream().anyMatch(normalizedTitle::contains)) return true;
+        if (!foodPlace && FOOD_TITLE_TERMS.stream().anyMatch(normalizedTitle::contains)) return true;
         if (!hasUsableImageDimensions(width, height)) return true;
         if (!naverTitleMatchesSpot(spotName, normalizedTitle)) return true;
         String normalizedHost = imageHost(imageUrl);

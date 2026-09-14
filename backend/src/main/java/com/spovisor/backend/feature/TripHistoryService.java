@@ -17,6 +17,7 @@ import java.util.Map;
 
 @Service
 public class TripHistoryService {
+    private static final String IMAGE_SAFETY_VERSION = "place-relevance-v2";
     private final TripHistoryRepository repository;
     private final ObjectMapper objectMapper;
     private final SpotSearchService spotSearchService;
@@ -99,6 +100,7 @@ public class TripHistoryService {
                         .limit(3)
                         .forEach(imageUrls::add);
                 ((ObjectNode) spot).set("imageUrls", imageUrls);
+                ((ObjectNode) spot).put("imageSafetyVersion", IMAGE_SAFETY_VERSION);
             }
             trip.updateCourseJson(objectMapper.writeValueAsString(course));
             return TripResponse.from(trip);
