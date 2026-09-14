@@ -1,4 +1,4 @@
-import { NaverMapMarkerOverlay, NaverMapView } from '@mj-studio/react-native-naver-map';
+import { NaverMapMarkerOverlay, NaverMapView, type NaverMapViewRef } from '@mj-studio/react-native-naver-map';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import {
@@ -539,7 +539,6 @@ const stepStyles = StyleSheet.create({
 // ─────────────────────────────────────────────────────────
 
 export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initialUser: UserProfile }) {
-  console.log("MainApp 컴포넌트 렌더링 시작! selectedCourse:", selectedCourse);
   const [tab, setTab] = useState<TabType>('home');
   const [flow, setFlow] = useState<FlowStep>('home');
   const [profile, setProfile] = useState<UserProfile>(initialUser);
@@ -573,6 +572,10 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
   const [selectedGame, setSelectedGame] = useState<Game | null>(initialGame);
   const [stadiumCoordinates, setStadiumCoordinates] = useState<{ latitude: number; longitude: number } | null>(null);
   const [gameViewMode, setGameViewMode] = useState<'all' | 'favorites'>('all');
+  const [selectedMapDay, setSelectedMapDay] = useState<number | 'all'>(1);
+  const [selectedMapSpotId, setSelectedMapSpotId] = useState<number | null>(null);
+
+  const mapRef = useRef<NaverMapViewRef>(null);
 
   // Form State
   const [selectedGameDate, setSelectedGameDate] = useState<string>(initialGame.date);
@@ -1109,6 +1112,92 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
     setTab(targetTab);
     if (targetTab === 'my') setMyPageSection('menu');
     setFlow('home');
+  };
+
+  useEffect(() => {
+    if (!selectedCourse?.spots?.length) return;
+
+    const firstDay = selectedCourse.spots
+      .map((spot) => Number(spot.day))
+      .filter((day) => !isNaN(day))
+      .sort((a, b) => a - b)[0];
+
+    setSelectedMapDay(firstDay || 1);
+    setSelectedMapSpotId(null);
+  }, [selectedCourse]);
+
+  // 현재 코스에 존재하는 DAY 목록
+  const mapDays = selectedCourse?.spots
+    ? [...new Set(
+        selectedCourse.spots
+          .map((spot) => Number(spot.day))
+          .filter((day) => !isNaN(day))
+      )].sort((a, b) => a - b)
+    : [];
+
+  // 현재 선택된 DAY의 장소
+  const selectedDaySpots = selectedCourse?.spots
+    ? selectedMapDay === 'all'
+      ? selectedCourse.spots
+      : selectedCourse.spots.filter(
+          (spot) =>
+            Number(spot.day) === Number(selectedMapDay)
+        )
+      : [];
+
+  // DAY 변경
+  const handleMapDayChange = (day: number | 'all') => {
+
+    setSelectedMapDay(day);
+    setSelectedMapSpotId(null);
+
+    if (day === 'all') {
+      return;
+    }
+
+    const daySpots = selectedCourse?.spots?.filter(
+      (spot) =>
+        Number(spot.day) === day &&
+        spot.map_x != null &&
+        spot.map_y != null &&
+        spot.map_x !== '' &&
+        spot.map_y !== ''
+    ) || [];
+
+    const firstSpot = daySpots[0];
+
+    if (firstSpot && mapRef.current) {
+      mapRef.current.animateCameraTo({
+        latitude: Number(firstSpot.map_y),
+        longitude: Number(firstSpot.map_x),
+        zoom: 13,
+        duration: 700,
+        easing: 'EaseOut',
+      });
+    }
+  };
+
+  // 리스트에서 장소 선택
+  const handleMapSpotSelect = (spot: CourseSpot) => {
+    setSelectedMapSpotId(spot.id);
+
+    if (
+      spot.map_x == null ||
+      spot.map_y == null ||
+      spot.map_x === '' ||
+      spot.map_y === ''
+    ) {
+      return;
+    }
+
+    if (mapRef.current) {
+      mapRef.current.animateCameraTo({
+        latitude: Number(spot.map_y),
+        longitude: Number(spot.map_x),
+        zoom: 15,
+        duration: 800,
+      });
+    }
   };
 
   useEffect(() => {
@@ -2466,10 +2555,48 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
 
                 {/* 4단계: 코스 상세 화면 내부의 detailMapArea 수정 */}
                 <View style={styles.detailMapArea}>
+                  {/* DAY 선택 버튼 */}
+                  <View style={styles.mapDaySelector}>
+                    <TouchableOpacity
+                        style={[
+                          styles.mapDayButton,
+                          selectedMapDay === 'all' && styles.mapDayButtonActive,
+                        ]}
+                        onPress={() => handleMapDayChange('all')}
+                      >
+                        <Text
+                          style={[
+                            styles.mapDayButtonText,
+                            selectedMapDay === 'all' && styles.mapDayButtonTextActive,
+                          ]}
+                        >
+                          전체
+                        </Text>
+                      </TouchableOpacity>
+                    {mapDays.map((day) => (
+                      <TouchableOpacity
+                        key={`map-day-${day}`}
+                        style={[
+                          styles.mapDayButton,
+                          selectedMapDay === day && styles.mapDayButtonActive,
+                        ]}
+                        onPress={() => handleMapDayChange(day)}
+                      >
+                        <Text
+                          style={[
+                            styles.mapDayButtonText,
+                            selectedMapDay === day && styles.mapDayButtonTextActive,
+                          ]}
+                        >
+                          DAY {day}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
                   {Platform.OS === 'web' ? (
                     /* 🌐 웹일 때는 구글 맵과 기존 오버레이를 보여줌 */
                     (() => {
-                      const firstSpot = selectedCourse.spots.find(s => s.name);
+                      const firstSpot = selectedCourse.spots.find((s) => Number(s.day) === Number(selectedMapDay) && s.name);
                       const query = encodeURIComponent(firstSpot ? firstSpot.name : '잠실야구장');
 
                       return (
@@ -2485,28 +2612,73 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                   ) : (
                     /* 📱 앱일 때는 네이버 지도를 띄움 */
                     <NaverMapView
+                      ref={mapRef}
                       style={{ flex: 1 }}
                       camera={{
-                        latitude: Number(selectedCourse.spots.find(s => s.map_x && s.map_y)?.map_y) || 37.5665,
-                        longitude: Number(selectedCourse.spots.find(s => s.map_x && s.map_y)?.map_x) || 126.9780,
+                        latitude:
+                          Number(
+                            selectedDaySpots.find(
+                              (spot) =>
+                                spot.map_x != null &&
+                                spot.map_y != null
+                            )?.map_y
+                          ) || 37.5665,
+
+                        longitude:
+                          Number(
+                            selectedDaySpots.find(
+                              (spot) =>
+                                spot.map_x != null &&
+                                spot.map_y != null
+                            )?.map_x
+                          ) || 126.9780,
                         zoom: 13,
                       }}
                     >
-                      {selectedCourse.spots
-                        .filter((spot) => spot.map_x != null && spot.map_y != null && spot.map_x !== '' && spot.map_y !== '')
+                      {selectedDaySpots
+                        .filter(
+                          (spot) =>
+                            spot.map_x != null &&
+                            spot.map_y != null &&
+                            spot.map_x !== '' &&
+                            spot.map_y !== ''
+                        )
                         .map((spot, idx) => {
-                          if (!spot.map_x || !spot.map_y) return null;
+
+                          const isSelected = selectedMapSpotId === spot.id;
+
                           return (
                             <NaverMapMarkerOverlay
                               key={`marker-${spot.id}-${idx}`}
                               latitude={Number(spot.map_y)}
                               longitude={Number(spot.map_x)}
-                              image={{ symbol: 'blue' }}
-                              caption={{ text: `${idx + 1}. ${spot.name}` }}
-                              tintColor="#5B44E8"
-                            />
-                          );
-                        })}
+                              image={{
+                                symbol: isSelected
+                                ? 'red'
+                                : 'blue',
+                              }}
+                              width={isSelected ? 44 : 32}
+                              height={isSelected ? 44 : 32}
+                              caption={{
+                                text: `${idx + 1}. ${spot.name}`,
+                                textSize: isSelected ? 14 : 12,
+                                color: isSelected
+                                  ? '#EF4444'
+                                  : '#111827',
+                                haloColor: '#FFFFFF',
+                              }}
+                              tintColor={
+                                isSelected
+                                ? '#EF4444'
+                                : '#5B44E8'
+                              }
+                              onTap={() => {
+                                handleMapSpotSelect(spot);
+                              }}
+                              zIndex={isSelected ? 100 : 1}
+                          />
+                        );
+                      })}
                     </NaverMapView>
                   )}
                 </View>
@@ -2516,39 +2688,134 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                   <View style={styles.modalDragHandle} />
                   <Text style={styles.bottomSheetTitleCenter}>날짜별 동선을 지도에서 확인</Text>
 
-                  <ScrollView style={styles.flex1} contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
-                    {selectedCourse.spots.map((spot, idx, arr) => {
-                      const isFirstOfNewDay = idx === 0 || spot.day !== arr[idx-1].day;
+                  <ScrollView
+  style={styles.flex1}
+  contentContainerStyle={{
+    padding: 20,
+    paddingBottom: 40,
+  }}
+>
+  {mapDays.map((day) => {
+    const daySpots = selectedCourse.spots.filter(
+      (spot) => Number(spot.day) === Number(day)
+    );
 
-                      return ((
-                        <React.Fragment key={`timeline-${idx}`}>
-                          {isFirstOfNewDay && spot.day && (
-                            <View style={{ marginTop: idx === 0 ? 0 : 20, marginBottom: 16,backgroundColor: '#EEF2FF', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, alignSelf: 'flex-start' }}>
-                              <Text style={{ fontSize: 13, fontWeight: '900', color: '#5B44E8' }}>DAY {spot.day}</Text>
-                            </View>
-                          )}
+    return (
+      <View key={`timeline-day-${day}`}>
 
-                          <View style={styles.timelineItemRow}>
-                            <View style={styles.timelineLeftCol}>
-                              <View style={styles.timelineOrangePin}>
-                                <Text style={styles.timelinePinTextWhite}>{idx + 1}</Text>
-                              </View>
-                              {idx < arr.length - 1 && <View style={styles.timelineVerticalLineSolid} />}
-                            </View>
+        {/* DAY 구분 */}
+        <View
+          style={{
+            marginTop: day === mapDays[0] ? 0 : 24,
+            marginBottom: 16,
+            backgroundColor: '#EEF2FF',
+            paddingVertical: 6,
+            paddingHorizontal: 12,
+            borderRadius: 8,
+            alignSelf: 'flex-start',
+          }}
+        >
+          <Text
+            style={{
+              fontSize: 13,
+              fontWeight: '900',
+              color: '#5B44E8',
+            }}
+          >
+            DAY {day}
+          </Text>
+        </View>
 
-                            <View style={styles.timelineContentColNew}>
-                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                                <Text style={styles.categoryTextGreyNew}>{spot.category || '장소'}</Text>
-                                <Text style={styles.timelineItemTitleLargeNew}>{spot.name}</Text>
-                              </View>
-                              <Text style={styles.timelineItemDescGreyNew}>추천 테마: {spot.category}</Text>
-                              {(spot.category.includes('음식') || spot.category.includes('맛집') || spot.category.includes('카페') || spot.category.includes('관광') || spot.category.includes('쇼핑')) && renderSpotImages(spot)}
-                            </View>
-                          </View>
-                        </React.Fragment>
-                      ))
-                    })}
-                  </ScrollView>
+        {/* 해당 DAY의 장소 */}
+        {daySpots.map((spot, dayIdx) => {
+          const isSelected = selectedMapSpotId === spot.id;
+          const category = spot.category || '';
+
+          return (
+            <TouchableOpacity
+              key={`timeline-${spot.id}-${dayIdx}`}
+              activeOpacity={0.8}
+              onPress={() => handleMapSpotSelect(spot)}
+              style={[
+                styles.timelineItemRow,
+                isSelected && {
+                  backgroundColor: '#F5F3FF',
+                  borderRadius: 14,
+                  paddingVertical: 8,
+                  paddingHorizontal: 6,
+                },
+              ]}
+            >
+              {/* 왼쪽 번호 */}
+              <View style={styles.timelineLeftCol}>
+
+                <View
+                  style={[
+                    styles.timelineOrangePin,
+                    isSelected && {
+                      backgroundColor: '#5B44E8',
+                      transform: [{ scale: 1.12 }],
+                    },
+                  ]}
+                >
+                  <Text style={styles.timelinePinTextWhite}>
+                    {dayIdx + 1}
+                  </Text>
+                </View>
+
+                {/* 같은 DAY 안에서만 연결 */}
+                {dayIdx < daySpots.length - 1 && (
+                  <View style={styles.timelineVerticalLineSolid} />
+                )}
+
+              </View>
+
+              {/* 오른쪽 장소 */}
+              <View style={styles.timelineContentColNew}>
+
+                <View
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 6,
+                  }}
+                >
+                  <Text style={styles.categoryTextGreyNew}>
+                    {category || '장소'}
+                  </Text>
+
+                  <Text
+                    style={[
+                      styles.timelineItemTitleLargeNew,
+                      isSelected && {
+                        color: '#5B44E8',
+                      },
+                    ]}
+                  >
+                    {spot.name}
+                  </Text>
+                </View>
+
+                <Text style={styles.timelineItemDescGreyNew}>
+                  추천 테마: {category || '장소'}
+                </Text>
+
+                {(
+                  category.includes('음식') ||
+                  category.includes('맛집') ||
+                  category.includes('카페') ||
+                  category.includes('관광') ||
+                  category.includes('쇼핑')
+                ) && renderSpotImages(spot)}
+
+              </View>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    );
+  })}
+</ScrollView>
 
                   {/* 하단 고정 액션 버튼 */}
                   <View style={styles.detailFixedFooter}>
@@ -2593,7 +2860,15 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                   <Text style={styles.sectionTitle}>실제로 방문한 장소</Text>
                   <Text style={{ fontSize: 11, color: '#6B7280', marginTop: -10 }}>방문한 곳에 체크해주세요</Text>
 
-                  {selectedCourse.spots.map((spot) => {
+                  {selectedDaySpots
+                    .filter(
+                      (spot) =>
+                        spot.map_x != null &&
+                        spot.map_y != null &&
+                        spot.map_x !== '' &&
+                        spot.map_y !== ''
+                      )
+                    .map((spot, idx) => {
                     const isVisited = visitedSpotIds.includes(spot.id);
                     return (
                       <TouchableOpacity
@@ -2666,6 +2941,47 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                 </View>
 
                 <View style={styles.detailMapArea}>
+                  {/* DAY 선택 버튼 */}
+                  {mapDays.length > 0 && (
+                    <View style={styles.mapDaySelector}>
+                      <TouchableOpacity
+                        style={[
+                          styles.mapDayButton,
+                          selectedMapDay === 'all' && styles.mapDayButtonActive,
+                        ]}
+                        onPress={() => handleMapDayChange('all')}
+                      >
+                        <Text
+                          style={[
+                            styles.mapDayButtonText,
+                            selectedMapDay === 'all' && styles.mapDayButtonTextActive,
+                          ]}
+                        >
+                          전체
+                        </Text>
+                      </TouchableOpacity>
+                      {mapDays.map((day) => (
+                        <TouchableOpacity
+                          key={`map-day-${day}`}
+                          style={[
+                            styles.mapDayButton,
+                            selectedMapDay === day && styles.mapDayButtonActive,
+                          ]}
+                          onPress={() => handleMapDayChange(day)}
+                        >
+                          <Text
+                            style={[
+                              styles.mapDayButtonText,
+                              selectedMapDay === day &&
+                                styles.mapDayButtonTextActive,
+                            ]}
+                          >
+                            DAY {day}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
                   {Platform.OS === 'web' ? (
                     /* 🌐 웹일 때는 구글 맵에 첫 번째 장소명을 검색어로 전달하여 핀이 정확히 꽂히게 합니다 */
                     (() => {
@@ -2685,28 +3001,63 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                   ) : (
                     /* 📱 앱일 때는 네이버 지도를 띄움 */
                     <NaverMapView
+                      ref={mapRef}
                       style={{ flex: 1 }}
                       camera={{
-                        latitude: Number(selectedCourse.spots.find(s => s.map_x && s.map_y)?.map_y) || 37.5665,
-                        longitude: Number(selectedCourse.spots.find(s => s.map_x && s.map_y)?.map_x) || 126.9780,
+                        latitude: Number(selectedDaySpots.find(
+                          (spot) =>
+                            spot.map_x != null &&
+                            spot.map_y != null &&
+                            spot.map_x !== '' &&
+                            spot.map_y !== ''
+                        )?.map_y) || 37.5665,
+                        longitude: Number(selectedDaySpots.find(
+                          (spot) =>
+                            spot.map_x != null &&
+                            spot.map_y != null &&
+                            spot.map_x !== '' &&
+                            spot.map_y !== ''
+                        )?.map_x) || 126.9780,
                         zoom: 13,
                       }}
                     >
-                      {selectedCourse.spots
-                        .filter((spot) => spot.map_x != null && spot.map_y != null && spot.map_x !== '' && spot.map_y !== '')
-                        .map((spot, idx) => {
-                          if (!spot.map_x || !spot.map_y) return null;
+                      {selectedDaySpots
+  .filter(
+    (spot) =>
+      spot.map_x != null &&
+      spot.map_y != null &&
+      spot.map_x !== '' &&
+      spot.map_y !== ''
+  )
+  .map((spot, idx) => {
+    const isSelected = selectedMapSpotId === spot.id;
 
-                          return (
-                            <NaverMapMarkerOverlay
-                              key={`marker-${spot.id}-${idx}`}
-                              latitude={Number(spot.map_y)}
-                              longitude={Number(spot.map_x)}
-                              caption={{ text: `${idx + 1}. ${spot.name}` }}
-                              tintColor="#5B44E8"
-                            />
-                          );
-                        })}
+    return (
+      <NaverMapMarkerOverlay
+        key={`marker-${spot.id}-${idx}`}
+        latitude={Number(spot.map_y)}
+        longitude={Number(spot.map_x)}
+        image={{
+          symbol: isSelected ? 'red' : 'blue',
+        }}
+        width={isSelected ? 44 : 32}
+        height={isSelected ? 44 : 32}
+        caption={{
+          text: `${idx + 1}. ${spot.name}`,
+          textSize: isSelected ? 14 : 12,
+          color: isSelected ? '#EF4444' : '#111827',
+          haloColor: '#FFFFFF',
+        }}
+        tintColor={
+          isSelected
+            ? '#EF4444'
+            : '#5B44E8'
+        }
+        onTap={() => handleMapSpotSelect(spot)}
+        zIndex={isSelected ? 100 : 1}
+      />
+    );
+  })}
                     </NaverMapView>
                   )}
                 </View>
@@ -2715,22 +3066,161 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                   <View style={styles.modalDragHandle} />
                   <Text style={styles.bottomSheetTitleCenter}>날짜별 동선을 지도에서 확인</Text>
                   <ScrollView style={styles.flex1} contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
-                    {selectedCourse.spots.map((spot, idx, arr) => (
-                      <View key={`active-timeline-${idx}`} style={styles.timelineItemRow}>
-                        <View style={styles.timelineLeftCol}>
-                          <View style={styles.timelineOrangePin}><Text style={styles.timelinePinTextWhite}>{idx + 1}</Text></View>
-                          {idx < arr.length - 1 && <View style={styles.timelineVerticalLineSolid} />}
-                        </View>
-                        <View style={styles.timelineContentColNew}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                            <Text style={styles.categoryTextGreyNew}>{spot.category || '장소'}</Text>
-                            <Text style={styles.timelineItemTitleLargeNew}>{spot.name}</Text>
+                    {mapDays.map((day) => {
+                      const daySpots = selectedCourse.spots.filter(
+                        (spot) =>
+                          Number(spot.day) === Number(day)
+                      );
+                      return (
+                        <View key={`timeline-day-${day}`}>
+                          <View style={{
+                            marginTop:
+                              day === mapDays[0] ? 0 : 24,
+                            marginBottom: 16,
+                            backgroundColor: '#EEF2FF',
+                            paddingVertical: 6, 
+                            paddingHorizontal: 12, 
+                            borderRadius: 8,
+                            alignSelf: 'flex-start',
+                          }}
+                          >
+                            <Text
+                              style={{
+                                fontSize: 13,
+                                fontWeight: '900',
+                                color: '#5B44E8',
+                              }}
+                            >
+                              DAY {day}
+                            </Text>
                           </View>
-                          <Text style={styles.timelineItemDescGreyNew}>추천 테마: {spot.category}</Text>
-                          {renderSpotImages(spot)}
+
+                          {daySpots.map((spot, dayIdx) => {
+                            const isSelected = selectedMapSpotId === spot.id;
+                            const category = spot.category || '';
+
+                            return (
+                              <TouchableOpacity
+                                key={`timeline-${spot.id}-${dayIdx}`}
+                                activeOpacity={0.8}
+                                onPress={() =>
+                                   handleMapSpotSelect(spot)
+                                }
+                                style={[
+                                  styles.timelineItemRow,
+
+                                  isSelected && {
+                                    backgroundColor: '#F5F3FF',
+                                    borderRadius: 14,
+                                    paddingVertical: 8,
+                                    paddingHorizontal: 6,
+                                  },
+                                ]}
+                              >
+              <View style={styles.timelineLeftCol}>
+
+                <View
+                  style={[
+                    styles.timelineOrangePin,
+
+                    isSelected && {
+                      backgroundColor: '#5B44E8',
+                      transform: [
+                        { scale: 1.12 },
+                      ],
+                    },
+                  ]}
+                >
+                  <Text
+                    style={
+                      styles.timelinePinTextWhite
+                    }
+                  >
+                    {dayIdx + 1}
+                  </Text>
+                </View>
+
+
+                {/* 같은 DAY 안에서만 연결 */}
+                {dayIdx < daySpots.length - 1 && (
+                  <View
+                    style={
+                      styles.timelineVerticalLineSolid
+                    }
+                  />
+                )}
+
+              </View>
+
+
+              {/* =====================
+                  오른쪽 장소 정보
+              ===================== */}
+              <View
+                style={
+                  styles.timelineContentColNew
+                }
+              >
+
+                <View
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 6,
+                  }}
+                >
+
+                  <Text
+                    style={
+                      styles.categoryTextGreyNew
+                    }
+                  >
+                    {category || '장소'}
+                  </Text>
+
+
+                  <Text
+                    style={[
+                      styles.timelineItemTitleLargeNew,
+
+                      isSelected && {
+                        color: '#5B44E8',
+                      },
+                    ]}
+                  >
+                    {spot.name}
+                  </Text>
+
+                </View>
+
+
+                <Text
+                  style={
+                    styles.timelineItemDescGreyNew
+                  }
+                >
+                  추천 테마: {category || '장소'}
+                </Text>
+
+
+                {/* 장소 이미지 */}
+                {(
+                  category.includes('음식') ||
+                  category.includes('맛집') ||
+                  category.includes('카페') ||
+                  category.includes('관광') ||
+                  category.includes('쇼핑')
+                ) && renderSpotImages(spot)}
+
+              </View>
+
+                          </TouchableOpacity>
+
+                            )
+                          })}
                         </View>
-                      </View>
-                    ))}
+                      )
+                    })}
                   </ScrollView>
                   <View style={styles.detailFixedFooter}>
                     <TouchableOpacity style={styles.purpleBtn} onPress={() => {
@@ -2768,6 +3258,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                           onPress={() => {
                             setSelectedCourse(tripCourse);
                             setCurrentTripId(trip.id);
+                            setSelectedMapDay(1);
                           }}
                         >
                           <View style={styles.rowBetween}>
@@ -3741,5 +4232,48 @@ const styles = StyleSheet.create({
   
   detailFixedFooter: { padding: 16, backgroundColor: '#FFF', borderTopWidth: 1, borderTopColor: '#F1F5F9', gap: 8 },
   bookmarkOutlineBtnNew: { height: 48, borderRadius: 24, borderWidth: 1.5, borderColor: '#5B44E8', backgroundColor: '#FFF', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 6 },
+  mapDaySelector: {
+  position: 'absolute',
+  top: 12,
+  left: 16,
+  right: 16,
+  zIndex: 10,
+  flexDirection: 'row',
+  gap: 8,
+  backgroundColor: '#FFFFFF',
+  padding: 6,
+  borderRadius: 14,
+  elevation: 4,
+  shadowColor: '#000',
+  shadowOffset: {
+    width: 0,
+    height: 2,
+  },
+  shadowOpacity: 0.12,
+  shadowRadius: 6,
+},
+
+mapDayButton: {
+  flex: 1,
+  paddingVertical: 9,
+  alignItems: 'center',
+  justifyContent: 'center',
+  borderRadius: 9,
+  backgroundColor: '#F1F5F9',
+},
+
+mapDayButtonActive: {
+  backgroundColor: '#5B44E8',
+},
+
+mapDayButtonText: {
+  fontSize: 13,
+  fontWeight: '700',
+  color: '#64748B',
+},
+
+mapDayButtonTextActive: {
+  color: '#FFFFFF',
+},
   
 });
