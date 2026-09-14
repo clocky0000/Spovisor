@@ -149,16 +149,25 @@ SUMMARY_TEMPLATES = {
         "{city} 미식 코스예요. {spot1}부터 시작해서 총 {count}곳을 즐길 수 있어요. 맛집 {food_n}곳, 관광 {tour_n}곳으로 구성했어요.",
         "{city}의 숨은 맛집 코스예요. {spot1}, {spot2} 등 총 {count}곳을 추천드려요.",
         "먹는 게 여행의 전부! {city} 미식 탐방 코스예요. {spot1}에서 시작해 {spot_last}까지 {count}곳이에요.",
+        "{city} 맛집 투어예요. 총 {count}곳, {spot1}부터 {spot_last}까지 배 터지게 먹어봐요.",
+        "현지인도 찾는 {city} 식도락 코스예요. {spot1}, {spot2} 포함 총 {count}곳이에요.",
+        "{city}에서 제일 맛있는 {count}곳만 골랐어요. {spot1}부터 시작해봐요.",
     ],
     "관광지 중심형": [
         "{city} 대표 관광지 코스예요. {spot1}부터 {spot_last}까지 총 {count}곳을 둘러볼 수 있어요.",
         "{city}의 랜드마크를 한 번에! 총 {count}곳, 이동거리 약 {distance}km예요.",
         "{city} 핵심 관광 코스예요. {spot1}, {spot2} 등 총 {count}곳을 추천드려요.",
+        "{city}를 제대로 즐기는 {count}곳 코스예요. {spot1}부터 {spot_last}까지 알차게 돌아봐요.",
+        "처음 {city}라면 이 코스! {spot1}, {spot2} 포함 총 {count}곳이에요.",
+        "{city} 여행의 정석 코스예요. 총 {count}곳, 이동거리 약 {distance}km로 구성했어요.",
     ],
     "로컬 힐링형": [
         "여유롭게 즐기는 {city} 힐링 코스예요. {spot1}에서 시작해 총 {count}곳을 천천히 둘러봐요.",
         "{city}의 한적한 자연과 골목을 즐기는 코스예요. 총 {count}곳, {spot1}을 꼭 들러보세요.",
         "바쁜 일상에서 잠깐 벗어나는 {city} 로컬 코스예요. 총 {count}곳이에요.",
+        "{city}의 조용한 매력을 찾아가는 코스예요. {spot1}부터 {spot_last}까지 여유롭게요.",
+        "서두르지 말고 천천히, {city} 힐링 코스 {count}곳이에요. {spot1}에서 시작해봐요.",
+        "알려지지 않은 {city}의 진짜 모습, 총 {count}곳 로컬 코스예요.",
     ],
 }
 

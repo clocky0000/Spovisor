@@ -225,11 +225,15 @@ def filter_candidates(user_result, spots, relations):
 
     all_pool = spots + extra_spots
 
-    # 카테고리 제외 + 장소명 제외
+    # 고정핀 목록 (제외 조건 무시하고 무조건 포함할 장소)
+    fixed_pin_names = set(meta.get("fixed_pins", []))
+
+    # 카테고리 제외 + 장소명 제외 (고정핀은 예외)
     all_pool = [
         s for s in all_pool
-        if s["mcls_nm"] not in exclude_cats
-        and s["spot_name"] not in exclude_spots
+        if s["spot_name"] in fixed_pin_names
+        or s.get("content_id", "").startswith("pin_")
+        or (s["mcls_nm"] not in exclude_cats and s["spot_name"] not in exclude_spots)
     ]
 
     # 좌표 없는 장소 제외 (경기장/고정핀 강제추가 장소는 예외)
@@ -238,6 +242,7 @@ def filter_candidates(user_result, spots, relations):
         if (s.get("map_x") and s.get("map_y"))
         or s.get("content_id", "").startswith("stadium_")
         or s.get("content_id", "").startswith("pin_")
+        or s["spot_name"] in fixed_pin_names
     ]
 
     # 선택한 경기장 외 다른 스포츠 시설 제외
@@ -612,7 +617,7 @@ def mmr_courses(user_result, candidates, k=3, n=5):
 
 # ── 코스 요약 텍스트 생성 ──────────────────────
 
-def generate_summary(course, city, concept):
+def generate_summary(course, city, concept, course_idx=0):
     """슬롯 템플릿 방식으로 코스 요약 텍스트 자동 생성 (LLM 미사용)"""
     food_cats = RATIO_CATEGORY_MAP["맛집"]
     tour_cats = RATIO_CATEGORY_MAP["관광지"]
@@ -622,7 +627,12 @@ def generate_summary(course, city, concept):
     distance = round(len(course) * 1.2, 1)
 
     templates = SUMMARY_TEMPLATES.get(concept, SUMMARY_TEMPLATES["관광지 중심형"])
-    template  = random.choice(templates)
+
+    # 코스 인덱스 기반으로 다른 템플릿 선택 (같은 코스면 항상 같은 템플릿)
+    # 랜덤 요소를 추가해 매 요청마다 다양하게
+    offset  = random.randint(0, len(templates) - 1)
+    idx     = (course_idx + offset) % len(templates)
+    template = templates[idx]
 
     summary = template.format(
         city      = city,

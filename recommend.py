@@ -660,7 +660,7 @@ def recommend():
                     game_deadline  = user_result["meta"]["game_deadline"],
                     game_spot_name = api_name,
                 )
-                summary = generate_summary(course, city, concept)
+                summary = generate_summary(course, city, concept, course_idx=i-1)
                 output.append({
                     "course_id": i,
                     "days": [{
@@ -683,7 +683,7 @@ def recommend():
             for i, daily in enumerate(multi_courses, 1):
                 all_spots = [s for day in daily for s in day["spots"]]
                 fill_coords(all_spots)
-                summary = generate_summary(all_spots, city, concept)
+                summary = generate_summary(all_spots, city, concept, course_idx=i-1)
                 output.append({
                     "course_id": i,
                     "days": [
@@ -811,7 +811,7 @@ def feedback():
                     game_deadline  = updated["meta"]["game_deadline"],
                     game_spot_name = api_name,
                 )
-                summary = generate_summary(course, city, concept)
+                summary = generate_summary(course, city, concept, course_idx=i-1)
                 output.append({
                     "course_id": i,
                     "days": [{
@@ -830,7 +830,7 @@ def feedback():
             for i, daily in enumerate(multi_courses, 1):
                 all_spots = [s for day in daily for s in day["spots"]]
                 fill_coords(all_spots)
-                summary = generate_summary(all_spots, city, concept)
+                summary = generate_summary(all_spots, city, concept, course_idx=i-1)
                 output.append({
                     "course_id": i,
                     "days": [
