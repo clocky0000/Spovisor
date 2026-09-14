@@ -626,13 +626,15 @@ def generate_summary(course, city, concept, course_idx=0):
     tour_n   = sum(1 for s in course if s["mcls_nm"] in tour_cats)
     distance = round(len(course) * 1.2, 1)
 
-    templates = SUMMARY_TEMPLATES.get(concept, SUMMARY_TEMPLATES["관광지 중심형"])
-
-    # 코스 인덱스 기반으로 다른 템플릿 선택 (같은 코스면 항상 같은 템플릿)
-    # 랜덤 요소를 추가해 매 요청마다 다양하게
-    offset  = random.randint(0, len(templates) - 1)
-    idx     = (course_idx + offset) % len(templates)
-    template = templates[idx]
+    # 커스텀 비율(컨셉 없음)일 때 전체 템플릿 합쳐서 랜덤
+    if concept not in SUMMARY_TEMPLATES:
+        all_templates = [t for ts in SUMMARY_TEMPLATES.values() for t in ts]
+        template = all_templates[(course_idx + random.randint(0, len(all_templates) - 1)) % len(all_templates)]
+    else:
+        templates = SUMMARY_TEMPLATES[concept]
+        offset    = random.randint(0, len(templates) - 1)
+        idx       = (course_idx + offset) % len(templates)
+        template  = templates[idx]
 
     summary = template.format(
         city      = city,
