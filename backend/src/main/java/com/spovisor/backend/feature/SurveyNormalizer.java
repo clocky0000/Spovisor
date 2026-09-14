@@ -36,8 +36,6 @@ final class SurveyNormalizer {
         copyText(source, survey, "여행기간", "tripDuration");
         copyText(source, survey, "여행_방식", "travelTiming");
         normalizeTransport(source, survey);
-        copyText(source, survey, "최대이동시간", "maxTravelTime");
-        copyWalkingDistance(source, survey);
         copyText(source, survey, "동행", "companion");
         copyArray(source, survey, "추가동행", "extraCompanion");
         copyText(source, survey, "컨셉", "concept");
@@ -52,16 +50,6 @@ final class SurveyNormalizer {
     private static void copyText(JsonNode source, ObjectNode target, String canonical, String legacy) {
         JsonNode value = first(source, canonical, legacy);
         if (value != null && !value.isNull()) target.set(canonical, value);
-    }
-
-    private static void copyWalkingDistance(JsonNode source, ObjectNode target) {
-        JsonNode value = first(source, "걷는거리", "walkingDistance");
-        if (value == null || value.isNull()) return;
-        String text = value.asText();
-        if ("10분 이하".equals(text)) text = "10분 이내";
-        if ("20분 이하".equals(text)) text = "20분 이내";
-        if ("30분 이하".equals(text)) text = "30분 이내";
-        target.put("걷는거리", text);
     }
 
     private static void normalizeTransport(JsonNode source, ObjectNode target) {

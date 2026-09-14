@@ -11,8 +11,6 @@ final class SurveyRules {
     private static final Set<String> TRIP_DURATIONS = Set.of("당일치기", "1박 2일", "2박 3일", "3박 4일");
     private static final Set<String> TRAVEL_TIMING = Set.of("경기 전", "경기 후", "전후 모두");
     private static final Set<String> TRANSPORT = Set.of("대중교통+도보", "자차+도보", "도보 단독");
-    private static final Set<String> MAX_TRAVEL_TIME = Set.of("30분", "1시간", "1시간 30분", "2시간", "3시간");
-    private static final Set<String> WALKING_DISTANCE = Set.of("10분 이내", "20분 이내", "30분 이내", "상관없음");
     private static final Set<String> COMPANIONS = Set.of("홀로여행", "친구와 여행", "연인과의 여행", "가족여행");
     private static final Set<String> EXTRA_COMPANIONS = Set.of("영유아 동반", "고령자 동반", "장애인·교통약자 동반", "반려동물 동반");
     private static final Set<String> CONCEPTS = Set.of("미식 탐방형", "관광지 중심형", "로컬 힐링형");
@@ -48,8 +46,6 @@ final class SurveyRules {
         requireChoice(survey, "여행기간", TRIP_DURATIONS);
         requireChoice(survey, "여행_방식", TRAVEL_TIMING);
         requireChoice(survey, "이동방식", TRANSPORT);
-        requireChoice(survey, "최대이동시간", MAX_TRAVEL_TIME);
-        requireChoice(survey, "걷는거리", WALKING_DISTANCE);
         requireChoice(survey, "동행", COMPANIONS);
         validateArray(survey, "추가동행", EXTRA_COMPANIONS);
         validateArray(survey, "추가조건", EXTRA_CONDITIONS);
@@ -124,8 +120,25 @@ final class SurveyRules {
     private static void validatePlaceNames(JsonNode survey, String field) {
         JsonNode value = survey.get(field);
         if (value == null || !value.isArray()) throw new IllegalArgumentException(field + "은 배열이어야 합니다.");
+
         for (JsonNode item : value) {
-            if (!item.isTextual() || item.asText().isBlank()) throw new IllegalArgumentException(field + "에는 장소명이 필요합니다.");
+            if (item.isTextual()) {
+                if (item.asText().isBlank()) {
+                    throw new IllegalArgumentException(field + "에는 장소명이 필요합니다.");
+                }
+                continue;
+            }
+
+            if (item.isObject() && item.hasNonNull("name")) {
+                JsonNode name = item.get("name");
+
+                if (!name.isTextual() || name.asText().isBlank()) {
+                    throw new IllegalArgumentException(field + "에는 장소명이 필요합니다.");
+                }
+                continue;
+            }
+
+            throw new IllegalArgumentException(field + "에는 장소명이 필요합니다.");
         }
     }
 }

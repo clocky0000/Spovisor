@@ -66,7 +66,13 @@ public class AiIntegrationService {
             HttpEntity<Map<String, Object>> request = new HttpEntity<>(requestBody, headers);
 
             String url = aiServerUrl + "/recommend";
+
+            log.info("[AI] Flask 요청 URL: {}", url);
+            log.info("[AI] Flask 요청 데이터: {}", objectMapper.writeValueAsString(requestBody));
+
             String responseBody = restTemplate.postForObject(url, request, String.class);
+
+            log.info("[AI] Flask 응답: {}", responseBody);
 
             if (responseBody != null && !responseBody.isBlank()) {
                 entity.complete(responseBody);
