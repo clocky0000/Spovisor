@@ -150,7 +150,6 @@ def fill_coords(spots, center_lat=None, center_lng=None, max_dist_km=20):
         return spots
 
     def haversine(lat1, lng1, lat2, lng2):
-        import math
         R = 6371
         dlat = math.radians(lat2 - lat1)
         dlng = math.radians(lng2 - lng1)
@@ -166,7 +165,6 @@ def fill_coords(spots, center_lat=None, center_lng=None, max_dist_km=20):
             continue
         try:
             params = {"query": name, "size": 5}
-            # 중심 좌표 있으면 반경 검색
             if center_lat and center_lng:
                 params.update({
                     "x": str(center_lng),
@@ -183,13 +181,11 @@ def fill_coords(spots, center_lat=None, center_lng=None, max_dist_km=20):
             if not docs:
                 continue
 
-            # 중심 좌표 있으면 가장 가까운 결과 선택
             if center_lat and center_lng and len(docs) > 1:
                 docs.sort(key=lambda d: haversine(
                     center_lat, center_lng,
                     float(d["y"]), float(d["x"])
                 ))
-                # 최대 반경 초과 결과 제외
                 docs = [d for d in docs if haversine(
                     center_lat, center_lng,
                     float(d["y"]), float(d["x"])
@@ -429,7 +425,6 @@ def prepare_spots(survey, region, areaCd, signguCd, api_name, user_result, regio
         spot["vector"] = vec
 
     # 음식점 좌표 사전 보완 (카카오 API)
-    # 연관 관광지 API에서 온 음식점들 이름으로 좌표 검색
     if KAKAO_KEY:
         no_coord_food = [
             s for s in spots
@@ -444,8 +439,7 @@ def prepare_spots(survey, region, areaCd, signguCd, api_name, user_result, regio
     if accessible_spots:
         spots = [s for s in spots if s["spot_name"] in accessible_spots]
 
-    # 고정핀 카카오 검색 후 후보에 강제 추가
-    # 반경 제한은 백엔드에서 60km로 처리
+    # 고정핀 카카오 검색 후 후보에 강제 추가 (반경 제한은 백엔드에서 60km 처리)
     user_fixed_pins = [p for p in survey.get("고정핀", []) if p != survey.get("경기장")]
 
     for pin_name in user_fixed_pins:
@@ -533,42 +527,9 @@ def health():
 
 @app.route("/recommend", methods=["POST"])
 def recommend():
-    """
-    추천 코스 생성 API
-
-    Request Body:
-    {
-        "survey": {
-            "경기장":           "서울종합운동장야구장",
-            "출발지":           "서울역",
-            "여행기간":         "당일치기",
-            "여행_방식":        "경기 전",
-            "경기시간":         "18:30",
-            "도착희망시간":     "1시간 전",
-            "출발희망시간":     "10:00",
-            "연전관람여부":     "아니오",
-            "추가관람경기_일정": [],
-            "이동방식":         "대중교통+도보",
-            "최대이동시간":     "1시간",
-            "걷는거리":         "상관없음",
-            "동행":             "친구와 여행",
-            "추가동행":         [],
-            "컨셉":             "미식 탐방형",
-            "추가조건":         [],
-            "고정핀":           [],
-            "제외장소":         [],
-            "제외조건":         [],
-            "커스텀비율":       null
-        }
-    }
-    """
     try:
         data   = request.json
         survey = data.get("survey", {})
-
-        print("🔍 [받은 설문 데이터 확인]:", survey)
-        print("🔍 [컨셉 확인]:", survey.get("컨셉"))
-        print("🔍 [커스텀비율 확인]:", survey.get("커스텀비율"))
 
         if not survey:
             return jsonify({"error": "survey 데이터가 없어요"}), 400
@@ -617,7 +578,7 @@ def recommend():
         scores     = get_region_scores(areaCd, signguCd)
         region_vec = build_region_vec(scores)
 
-        # spots 준비 (고정핀 + 경기장 포함)
+        # spots 준비
         try:
             spots, relations = prepare_spots(
                 survey, region, areaCd, signguCd, api_name, user_result, region_vec
@@ -628,10 +589,7 @@ def recommend():
         if not spots:
             return jsonify({"error": "해당 조건에 맞는 장소가 없어요"}), 404
 
-        # 필터링
-        print("  → 코스 생성...")
-
-        # relations 음식점 좌표 카카오로 보완 (filter_candidates에서 좌표없는 장소 제외 대비)
+        # relations 음식점 좌표 카카오로 보완
         if KAKAO_KEY:
             relation_food_names = list({
                 r["related_nm"] for r in relations
@@ -641,11 +599,11 @@ def recommend():
                 temp_spots = [{"spot_name": n, "mcls_nm": "음식", "map_x": None, "map_y": None} for n in relation_food_names]
                 fill_coords(temp_spots, center_lat=region.get("lat"), center_lng=region.get("lng"))
                 coord_map = {s["spot_name"]: (s.get("map_x"), s.get("map_y")) for s in temp_spots}
-                # relations에 좌표 정보 주입 (filter_candidates에서 extra_spots 생성 시 활용)
                 for r in relations:
                     if r.get("related_mcls") == "음식" and r.get("related_nm") in coord_map:
                         r["map_x"], r["map_y"] = coord_map[r["related_nm"]]
 
+        print("  → 코스 생성...")
         candidates = filter_candidates(user_result, spots, relations)
         trip_days  = user_result["meta"]["trip_days"]
         concept    = user_result["meta"]["concept"]
@@ -653,7 +611,6 @@ def recommend():
         output     = []
 
         if trip_days == 1:
-            # 당일치기
             alt_courses = mmr_courses(user_result, candidates, k=3, n=5)
             for i, course in enumerate(alt_courses, 1):
                 fill_coords(course)
@@ -680,7 +637,6 @@ def recommend():
                 })
 
         else:
-            # 다박 여행
             multi_courses = build_multi_day_courses(
                 user_result, candidates, api_name, k=3
             )
@@ -729,17 +685,6 @@ def recommend():
 
 @app.route("/feedback", methods=["POST"])
 def feedback():
-    """
-    좋아요/싫어요 반영 후 재추천
-
-    Request Body:
-    {
-        "user_result":         {"vector": [...], "meta": {...}},
-        "region":              {"areaCd": "11", "signguCd": "11710", "city": "서울 송파"},
-        "liked_spot_names":    ["채빛퀴진"],
-        "disliked_spot_names": ["롯데월드몰"]
-    }
-    """
     try:
         data        = request.json
         user_result = data.get("user_result")
@@ -753,7 +698,6 @@ def feedback():
         city     = region_info["city"]
         api_name = user_result["meta"].get("selected_api_name", "")
 
-        # TourAPI 재호출
         scores     = get_region_scores(areaCd, signguCd)
         region_vec = build_region_vec(scores)
         spots      = get_hub_spots(areaCd, signguCd)
@@ -770,7 +714,6 @@ def feedback():
             vec[-1]    = congestion
             spot["vector"] = vec
 
-        # 경기장 강제 추가
         if api_name:
             existing_names = {s["spot_name"] for s in spots}
             if api_name not in existing_names:
@@ -791,7 +734,6 @@ def feedback():
                 stadium_spot["vector"][-1] = 0.9
                 spots.append(stadium_spot)
 
-        # 피드백 반영
         liked_names    = data.get("liked_spot_names", [])
         disliked_names = data.get("disliked_spot_names", [])
         liked    = [s for s in spots if s["spot_name"] in liked_names]
