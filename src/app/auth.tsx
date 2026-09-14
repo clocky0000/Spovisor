@@ -102,8 +102,6 @@ export default function AuthScreen() {
               {isSubmitting ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.submitText}>{isSignup ? '회원가입하기' : '로그인하기'}</Text>}
             </Pressable>
           </View>
-
-          <Text style={styles.apiHint}>API: {process.env.EXPO_PUBLIC_API_URL ?? '로컬 백엔드'}</Text>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -131,5 +129,4 @@ const styles = StyleSheet.create({
   submitButton: { height: 52, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: '#5B44E8' },
   disabledButton: { opacity: 0.65 },
   submitText: { color: '#FFFFFF', fontSize: 15, fontWeight: '900' },
-  apiHint: { marginTop: 18, textAlign: 'center', color: '#A1A1AA', fontSize: 11 },
 });

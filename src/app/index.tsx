@@ -2,7 +2,9 @@ import { NaverMapMarkerOverlay, NaverMapView, type NaverMapViewRef } from '@mj-s
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import {
+  Accessibility,
   ArrowLeft,
+  Baby,
   Calendar as CalendarIcon,
   Check,
   ChevronDown,
@@ -10,12 +12,28 @@ import {
   ChevronRight,
   Clock,
   Coffee,
+  HandHeart,
+  HeartHandshake,
   Home,
+  HouseHeart,
+  Landmark,
+  Leaf,
   Map as MapIcon,
+  MapPin,
+  MapPinned,
+  MessageCircleQuestion,
   Navigation,
+  PawPrint,
   Pencil,
+  Route,
+  Settings,
+  SlidersHorizontal,
   Star,
+  Trophy,
   User,
+  UserRound,
+  UsersRound,
+  UtensilsCrossed,
   X
 } from 'lucide-react-native';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -105,6 +123,28 @@ const COURSE_CREATION_FLOWS = new Set<FlowStep>([
   'courseList',
   'courseDetail',
 ]);
+
+const SUPPORT_GUIDE_STEPS = [
+  { title: '경기 선택', description: '홈에서 날짜와 응원할 경기를 선택해요.' },
+  { title: '여행 조건 설정', description: '출발지·이동수단·동행자·여행 콘셉트를 정해요.' },
+  { title: '장소 추가·제외', description: '가고 싶은 장소와 제외할 장소를 설정해요.' },
+  { title: '코스 비교', description: 'AI 추천 코스 3개를 비교하고 하나를 확정해요.' },
+  { title: '여행 확인', description: '코스 탭에서 확인하고 완주 기록을 남겨요.' },
+] as const;
+
+const COMPANION_OPTIONS = [
+  { id: '홀로여행', icon: UserRound },
+  { id: '친구와 여행', icon: UsersRound },
+  { id: '연인과의 여행', icon: HeartHandshake },
+  { id: '가족여행', icon: HouseHeart },
+] as const;
+
+const EXTRA_COMPANION_OPTIONS = [
+  { title: '영유아 동반', desc: '유모차, 수유실, 놀이공간 고려', icon: Baby },
+  { title: '고령자 동반', desc: '엘리베이터, 쉼터, 경사로 우선', icon: HandHeart },
+  { title: '장애인·교통약자 동반', desc: '배리어프리 경로 우선 안내', icon: Accessibility },
+  { title: '반려동물 동반', desc: '펫 프렌들리 시설 및 경로 안내', icon: PawPrint },
+] as const;
 
 const TEAM_OPTIONS: { sport: Sport; label: string; teams: string[] }[] = [
   { sport: 'baseball', label: '야구', teams: ['LG', '키움', '삼성', 'KIA', 'KT', 'SSG', 'NC', '롯데', '한화', '두산'] },
@@ -295,6 +335,43 @@ const CONCEPT_PREVIEWS: Record<string, {
   },
 };
 
+const CONCEPT_OPTIONS = [
+  {
+    id: '미식 탐방형',
+    desc: '로컬 맛집과 인기 식당 중심',
+    icon: UtensilsCrossed,
+    iconColor: '#EA580C',
+    iconBg: '#FFF1ED',
+    activeBg: '#FFF7ED',
+    activeBorder: '#F97316',
+  },
+  {
+    id: '관광지 중심형',
+    desc: '랜드마크와 대표 관광지 중심',
+    icon: Landmark,
+    iconColor: '#5B44E8',
+    iconBg: '#EDE9FE',
+    activeBg: '#F5F3FF',
+    activeBorder: '#6D5DF6',
+  },
+  {
+    id: '로컬 힐링형',
+    desc: '한적하고 자유로운 장소 중심',
+    icon: Leaf,
+    iconColor: '#059669',
+    iconBg: '#D1FAE5',
+    activeBg: '#ECFDF5',
+    activeBorder: '#10B981',
+  },
+] as const;
+
+const CUSTOM_RATIO_STYLE = {
+  iconColor: '#2563EB',
+  iconBg: '#DBEAFE',
+  activeBg: '#EFF6FF',
+  activeBorder: '#3B82F6',
+} as const;
+
 // ─────────────────────────────────────────────────────────
 // Mock Data
 // ─────────────────────────────────────────────────────────
@@ -316,6 +393,10 @@ function getNextDateKey(dateStr: string, daysToAdd: number) {
 function dateLabel(value: string) {
   const [year, month, day] = value.split('-');
   return `${year}년 ${Number(month)}월 ${Number(day)}일`;
+}
+
+function dottedDateLabel(value: string) {
+  return value.split('T')[0].replace(/-/g, '.');
 }
 
 function aiStadiumName(value: string) {
@@ -1018,9 +1099,20 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
     return calendarGames.filter((game) => names.has(normalizeTeamName(game.home)) || names.has(normalizeTeamName(game.away)));
   }, [calendarGames, favoriteTeams, gameViewMode]);
   const previewConcept = concept ?? '미식 탐방형';
+  const previewConceptOption = CONCEPT_OPTIONS.find((item) => item.id === previewConcept) ?? CONCEPT_OPTIONS[0];
+  const PreviewConceptIcon = useCustomRatio ? SlidersHorizontal : previewConceptOption.icon;
+  const previewAccent = useCustomRatio ? CUSTOM_RATIO_STYLE.activeBorder : previewConceptOption.activeBorder;
+  const previewIconBg = useCustomRatio ? CUSTOM_RATIO_STYLE.iconBg : previewConceptOption.iconBg;
   const customRatioTotal = Object.values(customRatios).reduce((sum, value) => sum + (Number(value) || 0), 0);
   const accountHasChanges = accountNicknameDraft.trim() !== profile.nickname || accountCurrentPassword.length > 0 || accountNewPassword.length > 0;
   const activeTrip = useMemo(() => tripList.find((trip) => trip.status === 'ACTIVE' && trip.course && (!trip.expiresAt || new Date(trip.expiresAt).getTime() > now)), [tripList, now]);
+  const feedbackTrip = useMemo(
+    () => tripList.find((trip) => trip.id === currentTripId) ?? null,
+    [currentTripId, tripList],
+  );
+  const feedbackCourseTitle = feedbackTrip?.courseTitle || selectedCourse?.title || selectedCourse?.code || '추천 여행 코스';
+  const feedbackStadium = feedbackTrip?.stadium || selectedGame?.stadium || '경기장';
+  const feedbackTripDate = feedbackTrip?.tripDate || selectedGame?.date || selectedGameDate;
   const completedTripList = useMemo(() => tripList.filter((trip) => trip.status !== 'ACTIVE' && trip.status !== 'EXPIRED'), [tripList]);
   const selectedHistoryCourse = selectedHistoryTrip?.course && typeof selectedHistoryTrip.course === 'object' ? selectedHistoryTrip.course as Course : null;
   
@@ -1856,18 +1948,22 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                       >
                         <ChevronRight size={16} color="#6B7280" />
                       </TouchableOpacity>
+                    </View>
 
-                      <TouchableOpacity
-                        style={styles.todayBtn}
-                        onPress={() => {
-                          const now = new Date();
-                          setCalendarMonth(new Date(now.getFullYear(), now.getMonth(), 1));
-                          setSelectedDate(currentDateKey);
-                          setGameViewMode('all');
-                        }}
-                      >
-                        <Text style={styles.todayBtnText}>오늘</Text>
-                      </TouchableOpacity>
+                    <View style={styles.calendarTodayRow}>
+                      {selectedDate !== currentDateKey && (
+                        <TouchableOpacity
+                          style={styles.todayBtn}
+                          onPress={() => {
+                            const now = new Date();
+                            setCalendarMonth(new Date(now.getFullYear(), now.getMonth(), 1));
+                            setSelectedDate(currentDateKey);
+                            setGameViewMode('all');
+                          }}
+                        >
+                          <Text style={styles.todayBtnText}>오늘</Text>
+                        </TouchableOpacity>
+                      )}
                     </View>
 
                     <View style={styles.weekRow}>
@@ -2223,50 +2319,45 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
 
                 <ScrollView style={styles.flex1} contentContainerStyle={{ padding: 20, gap: 12 }}>
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
-                    {[
-                      { id: '홀로여행', emoji: '🧍' },
-                      { id: '친구와 여행', emoji: '👫' },
-                      { id: '연인과의 여행', emoji: '💑' },
-                      { id: '가족여행', emoji: '👨‍👩‍👧' },
-                    ].map((item) => {
+                    {COMPANION_OPTIONS.map((item) => {
                       const isSelected = companion === item.id;
+                      const CompanionIcon = item.icon;
 
                       return (
                         <TouchableOpacity
-                        key={item.id}
-                        onPress={() => setCompanion(item.id)}
-                        style={[styles.companionCard, isSelected && styles.companionCardActive]}
-                      >
-                        <Text style={{ fontSize: 32 }}>{item.emoji}</Text>
-                        <Text style={[styles.companionText, isSelected && { color: '#5B44E8' }]}>{item.id}</Text>
-                        
-                        <View
-                          style={[
-                            styles.companionRadio,
-                            isSelected && styles.companionRadioActive,
-                          ]}
+                          key={item.id}
+                          onPress={() => setCompanion(item.id)}
+                          style={[styles.companionCard, isSelected && styles.companionCardActive]}
                         >
-                          {isSelected && (
-                            <View style={styles.companionRadioInner} />
-                          )}
-                        </View>
-                      </TouchableOpacity>
+                          <View style={[styles.companionIcon, isSelected && styles.companionIconActive]}>
+                            <CompanionIcon size={28} color={isSelected ? '#5B44E8' : '#64748B'} strokeWidth={1.9} />
+                          </View>
+                          <Text style={[styles.companionText, isSelected && { color: '#5B44E8' }]}>{item.id}</Text>
+                          <View
+                            style={[
+                              styles.companionRadio,
+                              isSelected && styles.companionRadioActive,
+                            ]}
+                          >
+                            {isSelected && (
+                              <View style={styles.companionRadioInner} />
+                            )}
+                          </View>
+                        </TouchableOpacity>
                       );
                     })}
                   </View>
 
                   <Text style={[styles.inputLabel, { marginTop: 16 }]}>추가로 고려할 동행이 있나요?</Text>
 
-                  {[
-                    { title: '영유아 동반', desc: '유모차, 수유실, 놀이공간 고려', emoji: '👶' },
-                    { title: '고령자 동반', desc: '엘리베이터, 쉼터, 경사로 우선', emoji: '👴' },
-                    { title: '장애인·교통약자 동반', desc: '배리어프리 경로 우선 안내', emoji: '♿' },
-                    { title: '반려동물 동반', desc: '펫 프렌들리 시설 및 경로 안내', emoji: '🐾' },
-                  ].map((extra) => {
+                  {EXTRA_COMPANION_OPTIONS.map((extra) => {
                     const isSelected = extraCompanion.includes(extra.title);
+                    const ExtraCompanionIcon = extra.icon;
                     return (
                       <TouchableOpacity key={extra.title} style={styles.extraRow} onPress={() => toggleExtraCompanion(extra.title)}>
-                        <Text style={{ fontSize: 24, marginRight: 12 }}>{extra.emoji}</Text>
+                        <View style={[styles.extraCompanionIcon, isSelected && styles.extraCompanionIconActive]}>
+                          <ExtraCompanionIcon size={22} color={isSelected ? '#5B44E8' : '#64748B'} strokeWidth={1.9} />
+                        </View>
                         <View style={{ flex: 1 }}>
                           <Text style={{ fontWeight: '700', fontSize: 14 }}>{extra.title}</Text>
                           <Text style={{ color: '#6B7280', fontSize: 11, marginTop: 2 }}>{extra.desc}</Text>
@@ -2296,22 +2387,21 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                 </View>
 
                 <ScrollView style={styles.flex1} contentContainerStyle={{ padding: 20, gap: 12 }}>
-                  {[
-                    { id: '미식 탐방형', desc: '로컬 맛집과 인기 식당 중심', emoji: '🍜', activeBg: '#FEF9C3', activeBorder: '#F59E0B' },
-                    { id: '관광지 중심형', desc: '랜드마크와 대표 관광지 중심', emoji: '🗺️', activeBg: '#EEF2FF', activeBorder: '#5B44E8' },
-                    { id: '로컬 힐링형', desc: '한적하고 자유로운 장소 중심', emoji: '🌿', activeBg: '#ECFDF5', activeBorder: '#10B981' },
-                  ].map((item) => {
+                  {CONCEPT_OPTIONS.map((item) => {
                     const active = !useCustomRatio && concept === item.id;
+                    const ConceptIcon = item.icon;
                     return (
                       <TouchableOpacity
                         key={item.id}
                         onPress={() => { setUseCustomRatio(false); setConcept(item.id); }}
                         style={[
                           styles.conceptBox,
-                          active && { backgroundColor: item.activeBg, borderColor: item.activeBorder, borderWidth: 2 },
+                          active && { backgroundColor: item.activeBg, borderColor: item.activeBorder, borderWidth: 1.5 },
                         ]}
                       >
-                        <View style={styles.conceptIconCircle}><Text style={{ fontSize: 24 }}>{item.emoji}</Text></View>
+                        <View style={[styles.conceptIconCircle, { backgroundColor: item.iconBg }]}>
+                          <ConceptIcon size={22} color={item.iconColor} strokeWidth={1.9} />
+                        </View>
                         <View style={{ flex: 1 }}>
                           <Text style={[styles.conceptTitle, active && { color: item.activeBorder }]}>{item.id}</Text>
                           <Text style={styles.conceptDesc}>{item.desc}</Text>
@@ -2324,9 +2414,14 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                   })}
 
                   <Text style={[styles.inputLabel, { marginTop: 4 }]}>비율을 따로 정하고 싶나요?</Text>
-                  <TouchableOpacity onPress={toggleCustomRatio} style={[styles.customRatioToggle, useCustomRatio && styles.customRatioToggleActive]}>
+                  <TouchableOpacity onPress={toggleCustomRatio} style={[styles.customRatioToggle, useCustomRatio && { backgroundColor: CUSTOM_RATIO_STYLE.activeBg, borderColor: CUSTOM_RATIO_STYLE.activeBorder, borderWidth: 1.5 }]}>
+                    <View style={styles.customRatioToggleContent}>
+                      <View style={[styles.customRatioIcon, { backgroundColor: CUSTOM_RATIO_STYLE.iconBg }]}>
+                        <SlidersHorizontal size={19} color={CUSTOM_RATIO_STYLE.iconColor} strokeWidth={1.9} />
+                      </View>
                     <Text style={[styles.customRatioToggleText, useCustomRatio && styles.customRatioToggleTextActive]}>직접 비율 정하기</Text>
-                    <View style={[styles.radioOuter, useCustomRatio && styles.radioOuterActive]}>{useCustomRatio && <View style={[styles.radioInner, { backgroundColor: '#5B44E8' }]} />}</View>
+                    </View>
+                    <View style={[styles.radioOuter, useCustomRatio && { borderColor: CUSTOM_RATIO_STYLE.activeBorder }]}>{useCustomRatio && <View style={[styles.radioInner, { backgroundColor: CUSTOM_RATIO_STYLE.activeBorder }]} />}</View>
                   </TouchableOpacity>
                   {useCustomRatio && <View style={styles.ratioInputGrid}>
                     {(['맛집', '관광지', '자연', '쇼핑'] as const).map((label) => <View key={label} style={styles.ratioInputItem}>
@@ -2355,8 +2450,10 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                   <View style={styles.previewCard}>
                     <Text style={{ fontSize: 11, color: '#6B7280', fontWeight: 'bold', marginBottom: 8 }}>선택된 컨셉 미리보기</Text>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
-                      <Text style={{ fontSize: 18 }}>{useCustomRatio ? '🎛️' : CONCEPT_PREVIEWS[previewConcept].emoji}</Text>
-                      <Text style={{ fontWeight: '900', fontSize: 15 }}>{useCustomRatio ? '직접 설정한 비율' : previewConcept}</Text>
+                      <View style={[styles.previewConceptIcon, { backgroundColor: previewIconBg }]}>
+                        <PreviewConceptIcon size={18} color={previewAccent} strokeWidth={1.9} />
+                      </View>
+                      <Text style={[styles.previewConceptTitle, { color: previewAccent }]}>{useCustomRatio ? '직접 설정한 비율' : previewConcept}</Text>
                       {extras.map((e) => (
                         <View key={e} style={styles.previewTag}><Text style={{ fontSize: 10, color: '#5B44E8', fontWeight: 'bold' }}>{e}</Text></View>
                       ))}
@@ -2419,7 +2516,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                     </View>
                   )}
 
-                  {fixedPlaces.length === 0 && <Text style={styles.placeHint}>장소명을 입력하면 네이버 지역검색 결과에서 선택할 수 있어요.</Text>}
+                  {fixedPlaces.length === 0 && <Text style={styles.placeHint}>장소명을 입력하면 검색 결과에서 선택할 수 있어요.</Text>}
                   {fixedPlaces.map((place, index) => (
                     <View key={place.contentId} style={styles.placeItemCard}>
                       <View style={[styles.numBadge, { backgroundColor: index % 2 === 0 ? '#F59E0B' : '#10B981' }]}><Text style={styles.numBadgeText}>{index + 1}</Text></View>
@@ -2432,7 +2529,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                   ))}
 
                   <View style={{ marginTop: 12, borderTopWidth: 1, borderTopColor: '#F1F5F9', paddingTop: 16 }}>
-                    <Text style={{ fontSize: 12, color: '#9CA3AF', textAlign: 'center', marginBottom: 12 }}>제외 조건</Text>
+                    <Text style={{ fontSize: 12, color: '#9CA3AF', textAlign: 'center', marginBottom: 12 }}></Text>
                     <Text style={styles.inputLabel}>제외하고 싶은 장소</Text>
                     <View style={{ flexDirection: 'row', gap: 8, marginBottom: 4 }}>
                       <View style={styles.placeInputBox}>
@@ -2479,12 +2576,12 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                   </TouchableOpacity>
                   <View style={styles.aiTag}>
                     <Text style={{ color: '#5B44E8', fontSize: 11, fontWeight: 'bold' }}>
-                      {isSubmitting ? '✨ 추천코스 생성 중' : '✨ AI 추천 완료'}
+                      {isSubmitting ? '✨ 추천코스 생성 중' : '✨ 추천 완료'}
                     </Text>
                   </View>
                   <Text style={styles.headerSub}>{isSubmitting ? '추천코스를 생성하고 있어요' : '추천 코스가 완성됐어요!'}</Text>
                   <Text style={styles.headerDesc}>
-                    {isSubmitting ? '코스와 장소 사진을 함께 준비하고 있어요.' : `조건에 맞는 ${courses.length}개의 코스 중 선택해보세요.`}
+                    {isSubmitting ? '최적의 코스를 준비하고 있어요.' : `조건에 맞는 ${courses.length}개의 코스 중 선택해보세요.`}
                   </Text>
 
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, marginTop: 12 }}>
@@ -2496,7 +2593,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
 
                   <ScrollView style={styles.flex1} contentContainerStyle={{ padding: 20, gap: 16 }}>
                   {courses.length === 0 && isSubmitting && <View style={styles.aiEmptyCard}><ActivityIndicator size="large" color="#5B44E8" /><Text style={{ marginTop: 12, fontSize: 14, fontWeight: '800', color: '#374151' }}>추천코스 생성 중입니다</Text><Text style={{ marginTop: 4, fontSize: 12, color: '#6B7280', textAlign: 'center' }}>{recommendationLoadingStage === 'images' ? '조금만 더 기다려주세요' : '조건에 맞는 장소와 이동 동선을 찾는 중이에요.'}</Text></View>}
-                  {courses.length === 0 && !isSubmitting && <View style={styles.aiEmptyCard}><Text style={{ fontSize: 28 }}>🗺️</Text><Text style={{ marginTop: 10, fontSize: 14, fontWeight: '800', color: '#374151' }}>추천 코스를 불러오지 못했어요</Text><Text style={{ marginTop: 4, fontSize: 12, color: '#6B7280' }}>홈으로 돌아가 다시 시도해주세요.</Text></View>}
+                  {courses.length === 0 && !isSubmitting && <View style={styles.aiEmptyCard}><View style={styles.aiEmptyIcon}><Route size={28} color="#5B44E8" strokeWidth={1.9} /></View><Text style={{ marginTop: 10, fontSize: 14, fontWeight: '800', color: '#374151' }}>추천 코스를 불러오지 못했어요</Text><Text style={{ marginTop: 4, fontSize: 12, color: '#6B7280' }}>홈으로 돌아가 다시 시도해주세요.</Text></View>}
                   {courses.map((course, index) => {
                     const safeId = course.id ?? index;
                     const isExpanded = expandedCourseId === safeId;
@@ -2741,7 +2838,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                 {/* 하단 타임라인 바텀시트 */}
                 <View style={styles.detailTimelineSheet}>
                   <View style={styles.modalDragHandle} />
-                  <Text style={styles.bottomSheetTitleCenter}>날짜별 동선을 지도에서 확인</Text>
+                  <Text style={styles.bottomSheetTitleCenter}>날짜별 동선 확인</Text>
 
                   <ScrollView
   style={styles.flex1}
@@ -2880,10 +2977,12 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                 <View style={styles.header}>
                   <TouchableOpacity onPress={() => setFlow('home')} style={styles.backBtn}><ArrowLeft size={18} color="#0F0E1A" /><Text style={styles.backText}>뒤로</Text></TouchableOpacity>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    <Text style={{ fontSize: 22 }}>🏟️</Text>
+                    <View style={styles.feedbackHeaderIcon}>
+                      <Trophy size={22} color="#64748B" strokeWidth={1.9} />
+                    </View>
                     <View>
                       <Text style={styles.headerSub}>여행은 어떠셨나요?</Text>
-                      <Text style={styles.headerDesc}>A코스 · KT위즈파크 · 2026.06.29</Text>
+                      <Text style={styles.headerDesc}>{feedbackCourseTitle} · {feedbackStadium} · {dottedDateLabel(feedbackTripDate)}</Text>
                     </View>
                   </View>
                 </View>
@@ -2923,7 +3022,9 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                         onPress={() => toggleVisitSpot(spot.id)}
                         style={[styles.visitSpotCard, isVisited && styles.visitSpotCardActive]}
                       >
-                        <Text style={{ fontSize: 24, marginRight: 12 }}>{spot.emoji}</Text>
+                        <View style={[styles.visitSpotIcon, isVisited && styles.visitSpotIconActive]}>
+                          <MapPin size={22} color={isVisited ? '#10B981' : '#64748B'} strokeWidth={1.9} />
+                        </View>
                         <View style={{ flex: 1 }}>
                           <Text style={{ fontSize: 14, fontWeight: 'bold' }}>{spot.name}</Text>
                           <Text style={{ fontSize: 11, color: isVisited ? '#10B981' : '#9CA3AF', marginTop: 2 }}>
@@ -3141,7 +3242,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
 
                 <View style={[styles.detailTimelineSheet, styles.activeCourseTimelineSheet]}>
                   <View style={styles.modalDragHandle} />
-                  <Text style={styles.bottomSheetTitleCenter}>날짜별 동선을 지도에서 확인</Text>
+                  <Text style={styles.bottomSheetTitleCenter}>날짜별 동선 확인</Text>
                   <ScrollView style={styles.flex1} contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
                     {mapDays.map((day) => {
                       const daySpots = selectedCourse.spots.filter(
@@ -3291,7 +3392,9 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                   </ScrollView>
                   <View style={styles.detailFixedFooter}>
                     <TouchableOpacity style={styles.purpleBtn} onPress={() => {
-                      const activeT = activeTripList.find(t => t.course === selectedCourse) || activeTripList[0];
+                      const activeT = activeTripList.find(t => t.id === currentTripId)
+                        || activeTripList.find(t => t.course === selectedCourse)
+                        || activeTripList[0];
                       if (activeT) setCurrentTripId(activeT.id);
                       setTab('home');
                       setFlow('feedbackReview');
@@ -3311,7 +3414,9 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                 <ScrollView style={styles.flex1} contentContainerStyle={{ padding: 20, gap: 14 }}>
                   {activeTripList.length === 0 ? (
                     <View style={styles.emptyCoursePanel}>
-                      <Text style={{ fontSize: 38 }}>🗺️</Text>
+                      <View style={styles.emptyCourseIcon}>
+                        <Route size={36} color="#5B44E8" strokeWidth={1.9} />
+                      </View>
                       <Text style={styles.emptyCourseTitle}>저장된 코스가 없어요!</Text>
                       <Text style={styles.emptyCourseText}>홈에서 경기를 선택하고 여행 코스를 확정해보세요.</Text>
                     </View>
@@ -3393,7 +3498,21 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                   <View style={{ flexDirection: 'row', gap: 8, marginTop: 20 }}><View style={styles.myStatBox}><Text style={{ fontSize: 18, fontWeight: '900', color: '#FFF' }}>{new Set(completedTripList.map((trip) => trip.stadium)).size}</Text><Text style={{ fontSize: 10, color: '#E0E7FF' }}>방문 경기장</Text></View><View style={styles.myStatBox}><Text style={{ fontSize: 18, fontWeight: '900', color: '#FFF' }}>{activeTrip ? 1 : 0}</Text><Text style={{ fontSize: 10, color: '#E0E7FF' }}>진행 중 코스</Text></View><View style={styles.myStatBox}><Text style={{ fontSize: 18, fontWeight: '900', color: '#FFF' }}>{completedTripList.length}</Text><Text style={{ fontSize: 10, color: '#E0E7FF' }}>완료 여행</Text></View></View>
                 </View>
                 <ScrollView style={styles.flex1} contentContainerStyle={{ padding: 20, gap: 10 }}>
-                  {([{ id: 'account', label: '계정 관리', icon: '⚙️' }, { id: 'teams', label: '내 구단 설정', icon: '🏟️' }, { id: 'trips', label: '과거 여행 리스트', icon: '🗺️' }, { id: 'support', label: '고객 지원', icon: '💬' }] as const).map((item) => <TouchableOpacity key={item.id} style={styles.myMenuRow} onPress={() => { setMyPageSection(item.id); if (item.id === 'account') setAccountNicknameDraft(profile.nickname); }}><View style={styles.myMenuIcon}><Text style={{ fontSize: 18 }}>{item.icon}</Text></View><Text style={styles.myMenuLabel}>{item.label}</Text><ChevronRight size={18} color="#9CA3AF" /></TouchableOpacity>)}
+                  {([
+                    { id: 'account', label: '계정 관리', icon: Settings },
+                    { id: 'teams', label: '내 구단 설정', icon: Landmark },
+                    { id: 'trips', label: '과거 여행 리스트', icon: Route },
+                    { id: 'support', label: '고객 지원', icon: MessageCircleQuestion },
+                  ] as const).map((item) => {
+                    const MenuIcon = item.icon;
+                    return (
+                      <TouchableOpacity key={item.id} style={styles.myMenuRow} onPress={() => { setMyPageSection(item.id); if (item.id === 'account') setAccountNicknameDraft(profile.nickname); }}>
+                        <View style={styles.myMenuIcon}><MenuIcon size={21} color="#64748B" strokeWidth={1.9} /></View>
+                        <Text style={styles.myMenuLabel}>{item.label}</Text>
+                        <ChevronRight size={18} color="#9CA3AF" />
+                      </TouchableOpacity>
+                    );
+                  })}
                   <View style={styles.myAccountActions}><TouchableOpacity style={styles.smallAccountBtn} onPress={onLogout}><Text style={styles.smallAccountBtnText}>로그아웃</Text></TouchableOpacity><TouchableOpacity style={styles.smallAccountBtn} onPress={handleDeleteAccount}><Text style={styles.smallAccountBtnText}>회원탈퇴</Text></TouchableOpacity></View>
                 </ScrollView>
               </View>
@@ -3402,9 +3521,72 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
             ) : myPageSection === 'teams' ? (
               <View style={styles.flex1}><View style={styles.subPageHeader}><TouchableOpacity onPress={() => setMyPageSection('menu')}><ArrowLeft size={20} color="#6B7280" /></TouchableOpacity><Text style={styles.subPageTitle}>내 구단 설정</Text><View style={{ width: 20 }} /></View><ScrollView style={styles.flex1} contentContainerStyle={styles.subPageContent}><Text style={styles.subPageSectionTitle}>관심 구단 등록</Text><Text style={styles.subPageDescription}>경기 일정 별도 확인을 위해 관심 구단을 등록해주세요.{`\n`}종목당 최대 3개까지 등록할 수 있어요.</Text><View style={styles.subPageDivider} /><Text style={styles.subPageSectionTitle}>등록된 구단</Text>{favoriteTeams.length === 0 ? <View style={styles.emptyPreferenceCard}><Text style={{ fontSize: 22 }}>🏟️</Text><Text style={styles.emptyPreferenceTitle}>아직 등록된 구단이 없어요.</Text><Text style={styles.emptyPreferenceText}>관심 있는 구단을 등록해주세요.</Text></View> : favoriteTeams.map((team) => <View key={`${team.sport}-${team.teamName}`} style={styles.registeredTeamCard}><View style={{ flex: 1 }}><Text style={styles.registeredTeamName}>{team.teamName}</Text>{team.nickname ? <Text style={styles.registeredTeamNickname}>{team.nickname}</Text> : null}</View><TouchableOpacity style={styles.deleteTeamBtn} onPress={async () => { try { const saved = await replaceFavoriteTeams(favoriteTeams.filter((item) => !(item.sport === team.sport && item.teamName === team.teamName))); setFavoriteTeams(saved); } catch (error) { Alert.alert('삭제 실패', error instanceof Error ? error.message : '구단을 삭제하지 못했습니다.'); } }}><Text style={styles.deleteTeamText}>삭제</Text></TouchableOpacity></View>)}<TouchableOpacity style={styles.purpleBtn} onPress={() => { setFavoriteTeamDraftSport('baseball'); setFavoriteTeamDraftName(''); setFavoriteTeamDraftNickname(''); setFavoriteTeamModalOpen(true); }}><Text style={styles.purpleBtnText}>+ 관심 구단 등록하기</Text></TouchableOpacity></ScrollView></View>
             ) : myPageSection === 'trips' ? (
-              <View style={styles.flex1}><View style={styles.subPageHeader}><TouchableOpacity onPress={() => setMyPageSection('menu')}><ArrowLeft size={20} color="#6B7280" /></TouchableOpacity><Text style={styles.subPageTitle}>과거 여행 리스트</Text><View style={{ width: 20 }} /></View><ScrollView style={styles.flex1} contentContainerStyle={styles.subPageContent}><Text style={styles.subPageSectionTitle}>과거 여행 코스</Text><Text style={styles.subPageDescription}>완주한 코스를 다시 보고, 원하지 않는 기록은 삭제할 수 있어요.</Text>{completedTripList.length === 0 ? <View style={styles.emptyHistoryPanel}><Text style={styles.emptyHistoryText}>아직 완료한 여행이 없어요!</Text></View> : completedTripList.map((trip) => <TouchableOpacity key={trip.id} style={styles.historyCourseCard} onPress={() => setSelectedHistoryTrip(trip)}><View style={styles.historyIcon}><Text style={{ fontSize: 20 }}>🏟️</Text></View><View style={{ flex: 1 }}><Text style={styles.historyCourseTitle}>{trip.courseTitle ?? '추천 여행 코스'}</Text><Text style={styles.historyCourseRoute}>{trip.stadium}{trip.matchName ? ` · ${trip.matchName}` : ''}</Text><View style={styles.historyMetaRow}><Text style={styles.historyMeta}>{trip.tripDate ?? new Date(trip.createdAt).toLocaleDateString()}</Text><Text style={styles.historyRating}>★ {trip.rating ?? '-'}</Text></View></View><ChevronRight size={18} color="#9CA3AF" /></TouchableOpacity>)}</ScrollView></View>
+              <View style={styles.flex1}><View style={styles.subPageHeader}><TouchableOpacity onPress={() => setMyPageSection('menu')}><ArrowLeft size={20} color="#6B7280" /></TouchableOpacity><Text style={styles.subPageTitle}>과거 여행 리스트</Text><View style={{ width: 20 }} /></View><ScrollView style={styles.flex1} contentContainerStyle={styles.subPageContent}><Text style={styles.subPageSectionTitle}>과거 여행 코스</Text><Text style={styles.subPageDescription}>완주한 코스를 다시 보고, 원하지 않는 기록은 삭제할 수 있어요.</Text>{completedTripList.length === 0 ? <View style={styles.emptyHistoryPanel}><Text style={styles.emptyHistoryText}>아직 완료한 여행이 없어요!</Text></View> : completedTripList.map((trip) => <TouchableOpacity key={trip.id} style={styles.historyCourseCard} onPress={() => setSelectedHistoryTrip(trip)}><View style={styles.historyIcon}><MapPinned size={22} color="#5B44E8" strokeWidth={1.9} /></View><View style={{ flex: 1 }}><Text style={styles.historyCourseTitle}>{trip.courseTitle ?? '추천 여행 코스'}</Text><Text style={styles.historyCourseRoute}>{trip.stadium}{trip.matchName ? ` · ${trip.matchName}` : ''}</Text><View style={styles.historyMetaRow}><Text style={styles.historyMeta}>{trip.tripDate ?? new Date(trip.createdAt).toLocaleDateString()}</Text><Text style={styles.historyRating}>★ {trip.rating ?? '-'}</Text></View></View><ChevronRight size={18} color="#9CA3AF" /></TouchableOpacity>)}</ScrollView></View>
             ) : (
-              <View style={styles.flex1}><View style={styles.subPageHeader}><TouchableOpacity onPress={() => setMyPageSection('menu')}><ArrowLeft size={20} color="#6B7280" /></TouchableOpacity><Text style={styles.subPageTitle}>고객 지원</Text><View style={{ width: 20 }} /></View><ScrollView style={styles.flex1} contentContainerStyle={styles.subPageContent}><Text style={styles.subPageSectionTitle}>무엇을 도와드릴까요?</Text><TouchableOpacity style={styles.supportCard} onPress={() => setExpandedSupportItem(expandedSupportItem === 'guide' ? null : 'guide')}><View style={styles.supportCardHeader}><Text style={{ fontSize: 24 }}>💬</Text><View style={{ flex: 1 }}><Text style={styles.supportTitle}>스포바이저 이용 안내</Text><Text style={styles.supportText}>경기 선택부터 여행 코스 생성까지 한눈에 확인해보세요.</Text></View><ChevronDown size={18} color="#6B7280" /></View>{expandedSupportItem === 'guide' && <View style={styles.supportDetail}><Text style={styles.supportDetailTitle}>스포바이저는 이렇게 이용해요</Text><Text style={styles.supportDetailText}>1. 홈에서 경기 날짜와 응원하는 경기를 선택해요. 2. 출발지, 이동수단, 동행자와 여행 컨셉을 정해요. 3. 꼭 들르고 싶은 장소나 제외할 장소를 추가할 수 있어요. 4. AI가 만든 3개의 코스를 비교한 뒤 자세히 보고 마음에 드는 코스를 확정해요. 5. 확정한 코스는 코스 탭에서 여행 동안 확인할 수 있고, 완주하면 과거 여행 리스트에 기록돼요.</Text><View style={styles.supportTip}><Text style={styles.supportTipText}>TIP  ·  구단 설정에서 관심 구단을 등록하면 홈에서 해당 팀 경기만 모아볼 수 있어요.</Text></View></View>}</TouchableOpacity><TouchableOpacity style={styles.supportCard} onPress={() => setExpandedSupportItem(expandedSupportItem === 'contact' ? null : 'contact')}><View style={styles.supportCardHeader}><Text style={{ fontSize: 24 }}>✉️</Text><View style={{ flex: 1 }}><Text style={styles.supportTitle}>문의하기</Text><Text style={styles.supportText}>서비스 이용 중 문제가 있으면 편하게 알려주세요.</Text></View><ChevronDown size={18} color="#6B7280" /></View>{expandedSupportItem === 'contact' && <View style={styles.supportDetail}><Text style={styles.supportDetailTitle}>문의 접수 안내</Text><Text style={styles.supportDetailText}>오류 화면, 사용 중인 메뉴, 문제가 발생한 시간을 함께 알려주시면 더 빠르게 확인할 수 있어요.</Text><View style={styles.contactInfoBox}><Text style={styles.contactInfoLabel}>문의 채널</Text><Text style={styles.contactInfoValue}>support@spovisor.example</Text><Text style={styles.supportDetailText}>답변은 영업일 기준 1~2일 안에 드릴게요.</Text></View></View>}</TouchableOpacity></ScrollView></View>
+              <View style={styles.flex1}>
+                <View style={styles.subPageHeader}>
+                  <TouchableOpacity onPress={() => setMyPageSection('menu')}><ArrowLeft size={20} color="#6B7280" /></TouchableOpacity>
+                  <Text style={styles.subPageTitle}>고객 지원</Text>
+                  <View style={{ width: 20 }} />
+                </View>
+                <ScrollView style={styles.flex1} contentContainerStyle={styles.subPageContent}>
+                  <Text style={styles.subPageSectionTitle}>무엇을 도와드릴까요?</Text>
+                  <TouchableOpacity style={styles.supportCard} onPress={() => setExpandedSupportItem(expandedSupportItem === 'guide' ? null : 'guide')}>
+                    <View style={styles.supportCardHeader}>
+                      <Text style={{ fontSize: 24 }}>💬</Text>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.supportTitle}>스포바이저 이용 안내</Text>
+                        <Text style={styles.supportText}>경기 선택부터 여행 코스 생성까지 한눈에 확인해보세요.</Text>
+                      </View>
+                      <ChevronDown size={18} color="#6B7280" />
+                    </View>
+                    {expandedSupportItem === 'guide' && (
+                      <View style={styles.supportDetail}>
+                        <View style={styles.supportSteps}>
+                          {SUPPORT_GUIDE_STEPS.map((step, index) => (
+                            <View key={step.title} style={styles.supportStepRow}>
+                              <View style={styles.supportStepRail}>
+                                <View style={styles.supportStepBadge}>
+                                  <Text style={styles.supportStepNumber}>{index + 1}</Text>
+                                </View>
+                                {index < SUPPORT_GUIDE_STEPS.length - 1 && <View style={styles.supportStepConnector} />}
+                              </View>
+                              <View style={styles.supportStepContent}>
+                                <Text style={styles.supportStepTitle}>{step.title}</Text>
+                                <Text style={styles.supportStepText}>{step.description}</Text>
+                              </View>
+                            </View>
+                          ))}
+                        </View>
+                        <View style={styles.supportTip}>
+                          <Text style={styles.supportTipText}>TIP  ·  구단 설정에서 관심 구단을 등록하면 홈에서 해당 팀 경기만 모아볼 수 있어요.</Text>
+                        </View>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.supportCard} onPress={() => setExpandedSupportItem(expandedSupportItem === 'contact' ? null : 'contact')}>
+                    <View style={styles.supportCardHeader}>
+                      <Text style={{ fontSize: 24 }}>✉️</Text>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.supportTitle}>문의하기</Text>
+                        <Text style={styles.supportText}>서비스 이용 중 문제가 있으면 편하게 알려주세요.</Text>
+                      </View>
+                      <ChevronDown size={18} color="#6B7280" />
+                    </View>
+                    {expandedSupportItem === 'contact' && (
+                      <View style={styles.supportDetail}>
+                        <Text style={styles.supportDetailTitle}>문의 접수 안내</Text>
+                        <Text style={styles.supportDetailText}>오류 화면, 사용 중인 메뉴, 문제가 발생한 시간을 함께 알려주시면 더 빠르게 확인할 수 있어요.</Text>
+                        <View style={styles.contactInfoBox}>
+                          <Text style={styles.contactInfoLabel}>문의 채널</Text>
+                          <Text style={styles.contactInfoValue}>somedaym77@gmail.com</Text>
+                          <Text style={styles.supportDetailText}>답변은 영업일 기준 1~2일 안에 드릴게요.</Text>
+                        </View>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                </ScrollView>
+              </View>
             )}
           </>
         )}
@@ -3794,20 +3976,21 @@ const styles = StyleSheet.create({
   backText: { fontSize: 13, fontWeight: '600', color: '#6B7280' },
 
   calendarContainer: { marginTop: 16, borderTopWidth: 1, borderTopColor: '#F1F5F9', paddingTop: 12 },
-  calendarHeader: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 24, marginBottom: 12 },
+  calendarHeader: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 24, marginBottom: 6 },
   calNavBtn: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#F1F5F9', justifyContent: 'center', alignItems: 'center' },
-  todayBtn: { paddingHorizontal: 10, paddingVertical: 4, backgroundColor: '#F3F4F6', borderRadius: 6, marginLeft: 8 },
-  todayBtnText: { fontSize: 12, fontWeight: '600', color: '#374151' },
+  calendarTodayRow: { height: 28, alignItems: 'flex-end', paddingRight: 14, marginBottom: 4 },
+  todayBtn: { paddingHorizontal: 10, paddingVertical: 4, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#5B44E8', borderRadius: 12 },
+  todayBtnText: { fontSize: 11, fontWeight: '700', color: '#5B44E8' },
   calendarMonthText: { fontSize: 18, fontWeight: '900', color: '#0F0E1A' },
   todayDayCircle: { borderWidth: 1.5, borderColor: '#5B44E8' },
   weekRow: { flexDirection: 'row', justifyContent: 'space-around', marginBottom: 8 },
   weekText: { fontSize: 12, fontWeight: 'bold', color: '#9CA3AF', width: '14%', textAlign: 'center' },
   daysGrid: { flexDirection: 'row', flexWrap: 'wrap' },
   dayCell: { width: '14.28%', height: 40, alignItems: 'center', justifyContent: 'center' },
-  dayCircle: { width: 30, height: 30, borderRadius: 15, justifyContent: 'center', alignItems: 'center' },
+  dayCircle: { width: 30, height: 30, borderRadius: 15, flexShrink: 0, overflow: 'hidden', justifyContent: 'center', alignItems: 'center' },
   gameDayDots: { position: 'absolute', bottom: 1, flexDirection: 'row', alignItems: 'center', gap: 2 },
   gameDayDot: { width: 4, height: 4, borderRadius: 2 },
-  selectedDayCircle: { backgroundColor: '#5B44E8' },
+  selectedDayCircle: { width: 30, height: 30, borderRadius: 15, overflow: 'hidden', backgroundColor: '#5B44E8' },
   dayText: { fontSize: 13, fontWeight: 'bold', color: '#0F0E1A' },
   selectedDayText: { color: '#FFFFFF' },
 
@@ -3904,6 +4087,8 @@ const styles = StyleSheet.create({
 
   companionCard: { width: '48%', height: 110, borderRadius: 16, borderWidth: 1.5, borderColor: '#E2E8F0', backgroundColor: '#FFF', justifyContent: 'center', alignItems: 'center', gap: 6, position: 'relative' },
   companionCardActive: { borderColor: '#5B44E8', backgroundColor: '#EEF2FF' },
+  companionIcon: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#F8FAFC', justifyContent: 'center', alignItems: 'center' },
+  companionIconActive: { backgroundColor: '#E8E7FF' },
   companionText: { fontSize: 13, fontWeight: 'bold', color: '#4B5563' },
   companionRadio: {
     position: 'absolute',
@@ -3931,19 +4116,22 @@ const styles = StyleSheet.create({
   },
 
   extraRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', padding: 14, borderRadius: 16, borderWidth: 1, borderColor: '#F1F5F9', marginBottom: 8 },
+  extraCompanionIcon: { width: 36, height: 36, borderRadius: 18, marginRight: 12, backgroundColor: '#F8FAFC', justifyContent: 'center', alignItems: 'center' },
+  extraCompanionIconActive: { backgroundColor: '#EEF2FF' },
   radioEmpty: { width: 18, height: 18, borderRadius: 9, borderWidth: 1.5, borderColor: '#CBD5E1' },
 
-  conceptBox: { flexDirection: 'row', alignItems: 'center', padding: 16, borderRadius: 16, backgroundColor: '#FFF', borderWidth: 1, borderColor: '#F1F5F9', gap: 12 },
-  conceptIconCircle: { width: 44, height: 44, borderRadius: 12, backgroundColor: '#F8FAFC', justifyContent: 'center', alignItems: 'center' },
+  conceptBox: { flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 16, backgroundColor: '#FFF', borderWidth: 1, borderColor: '#E2E8F0', gap: 12 },
+  conceptIconCircle: { width: 42, height: 42, borderRadius: 21, justifyContent: 'center', alignItems: 'center' },
   conceptTitle: { fontSize: 15, fontWeight: '900', color: '#0F0E1A' },
   conceptDesc: { fontSize: 11, color: '#6B7280', marginTop: 2 },
   radioOuter: { width: 18, height: 18, borderRadius: 9, borderWidth: 1.5, borderColor: '#CBD5E1', justifyContent: 'center', alignItems: 'center' },
   radioInner: { width: 10, height: 10, borderRadius: 5 },
   radioOuterActive: { borderColor: '#5B44E8' },
   customRatioToggle: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 14, borderRadius: 14, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#FFF' },
-  customRatioToggleActive: { borderColor: '#5B44E8', backgroundColor: '#EEF2FF' },
+  customRatioToggleContent: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  customRatioIcon: { width: 34, height: 34, borderRadius: 17, justifyContent: 'center', alignItems: 'center' },
   customRatioToggleText: { fontSize: 13, fontWeight: '700', color: '#6B7280' },
-  customRatioToggleTextActive: { color: '#5B44E8' },
+  customRatioToggleTextActive: { color: '#2563EB' },
   ratioInputGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, padding: 12, borderRadius: 12, backgroundColor: '#F8FAFC' },
   ratioInputItem: { flexBasis: '47%', flexGrow: 1, minWidth: 128, gap: 6 },
   ratioInputLabel: { fontSize: 12, fontWeight: '700', color: '#374151' },
@@ -3952,12 +4140,14 @@ const styles = StyleSheet.create({
   ratioPercent: { flexShrink: 0, fontSize: 12, color: '#6B7280' },
   ratioTotalText: { width: '100%', fontSize: 11, color: '#6B7280', fontWeight: '700' },
 
-  pillChip: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, borderWidth: 1.5, borderColor: '#5B44E8', backgroundColor: '#FFF' },
-  pillChipActive: { backgroundColor: '#EEF2FF' },
-  pillChipText: { fontSize: 12, fontWeight: 'bold', color: '#5B44E8' },
+  pillChip: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#FFF' },
+  pillChipActive: { backgroundColor: '#F1F0FF', borderColor: '#E5E1FF' },
+  pillChipText: { fontSize: 12, fontWeight: 'bold', color: '#64748B' },
   pillChipTextActive: { color: '#5B44E8' },
 
-  previewCard: { backgroundColor: '#FEFCE8', padding: 16, borderRadius: 16, borderWidth: 1, borderColor: '#FEF08A', marginTop: 12 },
+  previewCard: { backgroundColor: '#F8F7FF', padding: 16, borderRadius: 16, borderWidth: 1, borderColor: '#E8E5FF', marginTop: 12 },
+  previewConceptIcon: { width: 34, height: 34, borderRadius: 17, justifyContent: 'center', alignItems: 'center', marginRight: 2 },
+  previewConceptTitle: { fontWeight: '900', fontSize: 15 },
   previewTag: { backgroundColor: '#EEF2FF', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 },
   ratioBox: { flex: 1, backgroundColor: '#FFF', paddingVertical: 8, borderRadius: 8, alignItems: 'center' },
   ratioSub: { fontSize: 10, color: '#6B7280' },
@@ -4024,8 +4214,11 @@ const styles = StyleSheet.create({
   changeStatusBtn: { height: 48, borderRadius: 24, borderWidth: 1.5, borderColor: '#5B44E8', backgroundColor: '#FFF', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 6, marginTop: 8 },
 
   reviewStarCard: { backgroundColor: '#FFF', padding: 20, borderRadius: 20, borderWidth: 1, borderColor: '#F1F5F9', alignItems: 'center' },
+  feedbackHeaderIcon: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#EEF2FF', justifyContent: 'center', alignItems: 'center' },
   visitSpotCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', padding: 16, borderRadius: 16, borderWidth: 1, borderColor: '#F1F5F9', marginBottom: 8 },
   visitSpotCardActive: { borderColor: '#10B981', backgroundColor: '#ECFDF5' },
+  visitSpotIcon: { width: 36, height: 36, borderRadius: 18, marginRight: 12, backgroundColor: '#F8FAFC', justifyContent: 'center', alignItems: 'center' },
+  visitSpotIconActive: { backgroundColor: '#D1FAE5' },
   checkCircleGreen: { width: 20, height: 20, borderRadius: 10, backgroundColor: '#CBD5E1', justifyContent: 'center', alignItems: 'center' },
 
   bigCheckCirclePurple: { width: 90, height: 90, borderRadius: 45, backgroundColor: '#5B44E8', justifyContent: 'center', alignItems: 'center' },
@@ -4059,6 +4252,7 @@ const styles = StyleSheet.create({
   savedIconCircle: { width: 40, height: 40, borderRadius: 12, backgroundColor: '#F8FAFC', justifyContent: 'center', alignItems: 'center' },
   emptyListText: { padding: 28, textAlign: 'center', color: '#9CA3AF', fontSize: 13 },
   aiEmptyCard: { alignItems: 'center', backgroundColor: '#EEF2FF', borderRadius: 20, padding: 24, marginTop: 24 },
+  aiEmptyIcon: { width: 52, height: 52, borderRadius: 26, backgroundColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center' },
   modalInput: { height: 48, borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 12, paddingHorizontal: 14, marginTop: 14, color: '#111827', backgroundColor: '#FFF' },
 
   myHeaderPurple: { backgroundColor: '#2E2A72', paddingHorizontal: 20, paddingTop: 16, paddingBottom: 24 },
@@ -4067,7 +4261,7 @@ const styles = StyleSheet.create({
   changeIconPill: { backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10, marginTop: 6, alignSelf: 'flex-start' },
   myStatBox: { flex: 1, backgroundColor: 'rgba(255, 255, 255, 0.12)', paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
   myMenuRow: { minHeight: 58, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, backgroundColor: '#FFF', borderBottomWidth: 1, borderBottomColor: '#F1F5F9' },
-  myMenuIcon: { width: 32, height: 32, borderRadius: 10, backgroundColor: '#F8FAFC', justifyContent: 'center', alignItems: 'center' },
+  myMenuIcon: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#F1F5F9', justifyContent: 'center', alignItems: 'center' },
   myMenuLabel: { flex: 1, fontSize: 15, color: '#374151', fontWeight: '700' },
   myAccountActions: { flexDirection: 'row', justifyContent: 'center', gap: 8, marginTop: 18, paddingBottom: 10 },
   smallAccountBtn: { minWidth: 72, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 6, borderWidth: 1, borderColor: '#D1D5DB', backgroundColor: '#FFF', alignItems: 'center' },
@@ -4109,7 +4303,7 @@ const styles = StyleSheet.create({
   emptyHistoryPanel: { minHeight: 330, justifyContent: 'center', alignItems: 'center' },
   emptyHistoryText: { color: '#5B44E8', fontSize: 14, fontWeight: '500' },
   historyCourseCard: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#FFF', padding: 14, borderRadius: 14, borderWidth: 1, borderColor: '#F1F5F9' },
-  historyIcon: { width: 42, height: 42, borderRadius: 12, backgroundColor: '#F8FAFC', justifyContent: 'center', alignItems: 'center' },
+  historyIcon: { width: 42, height: 42, borderRadius: 12, backgroundColor: '#F1F0FF', justifyContent: 'center', alignItems: 'center' },
   historyCourseTitle: { fontSize: 14, fontWeight: '900', color: '#111827' },
   historyCourseRoute: { color: '#6B7280', fontSize: 11, marginTop: 3 },
   historyMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 7 },
@@ -4122,6 +4316,15 @@ const styles = StyleSheet.create({
   supportDetail: { marginTop: 14, paddingTop: 14, borderTopWidth: 1, borderTopColor: '#EEF2F7', gap: 8 },
   supportDetailTitle: { fontSize: 13, fontWeight: '900', color: '#374151' },
   supportDetailText: { fontSize: 12, color: '#4B5563', lineHeight: 20 },
+  supportSteps: { marginTop: 2 },
+  supportStepRow: { minHeight: 52, flexDirection: 'row', gap: 10 },
+  supportStepRail: { width: 26, alignItems: 'center' },
+  supportStepBadge: { width: 24, height: 24, borderRadius: 12, backgroundColor: '#EEF1F6', justifyContent: 'center', alignItems: 'center' },
+  supportStepNumber: { fontSize: 11, fontWeight: '800', color: '#7C8799' },
+  supportStepConnector: { width: 1, flex: 1, marginVertical: 3, backgroundColor: '#E5E9F0' },
+  supportStepContent: { flex: 1, paddingTop: 1, paddingBottom: 10 },
+  supportStepTitle: { fontSize: 12, lineHeight: 17, fontWeight: '800', color: '#374151' },
+  supportStepText: { marginTop: 1, fontSize: 11, lineHeight: 17, color: '#6B7280' },
   supportTip: { padding: 10, borderRadius: 10, backgroundColor: '#EEF2FF' },
   supportTipText: { fontSize: 11, color: '#5B44E8', lineHeight: 17, fontWeight: '700' },
   contactInfoBox: { padding: 12, borderRadius: 10, backgroundColor: '#F8FAFC', gap: 4 },
@@ -4138,6 +4341,7 @@ const styles = StyleSheet.create({
   teamChipTextActive: { color: '#5B44E8' },
   tripIconCircle: { width: 40, height: 40, borderRadius: 12, backgroundColor: '#F8FAFC', justifyContent: 'center', alignItems: 'center' },
   emptyCoursePanel: { minHeight: 360, justifyContent: 'center', alignItems: 'center', backgroundColor: '#FFF', borderRadius: 20, padding: 24, gap: 10 },
+  emptyCourseIcon: { width: 64, height: 64, borderRadius: 20, backgroundColor: '#EEF2FF', justifyContent: 'center', alignItems: 'center' },
   emptyCourseTitle: { color: '#374151', fontSize: 16, fontWeight: '900', textAlign: 'center' },
   emptyCourseText: { color: '#9CA3AF', fontSize: 12, lineHeight: 18, textAlign: 'center' },
   activeCourseBanner: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#2E2A72', borderRadius: 18, padding: 18 },
