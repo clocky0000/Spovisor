@@ -1022,6 +1022,31 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
   const activeTrip = useMemo(() => tripList.find((trip) => trip.status === 'ACTIVE' && trip.course && (!trip.expiresAt || new Date(trip.expiresAt).getTime() > now)), [tripList, now]);
   const completedTripList = useMemo(() => tripList.filter((trip) => trip.status !== 'ACTIVE' && trip.status !== 'EXPIRED'), [tripList]);
   const selectedHistoryCourse = selectedHistoryTrip?.course && typeof selectedHistoryTrip.course === 'object' ? selectedHistoryTrip.course as Course : null;
+  
+  const selectedMapSpot = selectedCourse?.spots?.find(
+    (spot) => spot.id === selectedMapSpotId
+  );
+
+  const mapMarkerSpots = (() => {
+    if (!selectedCourse?.spots) return [];
+
+    if (selectedMapDay === 'all') {
+      return selectedCourse.spots;
+    }
+
+    const daySpots = selectedCourse.spots.filter(
+      (spot) => Number(spot.day) === Number(selectedMapDay)
+    );
+
+    if (
+      selectedMapSpot &&
+      Number(selectedMapSpot.day) !== Number(selectedMapDay)
+    ) {
+      return [...daySpots, selectedMapSpot];
+    }
+
+    return daySpots;
+  })();
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 60_000);
@@ -1190,14 +1215,12 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
       return;
     }
 
-    if (mapRef.current) {
-      mapRef.current.animateCameraTo({
-        latitude: Number(spot.map_y),
-        longitude: Number(spot.map_x),
-        zoom: 15,
-        duration: 800,
-      });
-    }
+    mapRef.current?.animateCameraTo({
+      latitude: Number(spot.map_y),
+      longitude: Number(spot.map_x),
+      zoom: 15, 
+      duration: 800,
+    })
   };
 
   useEffect(() => {
@@ -2635,7 +2658,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                         zoom: 13,
                       }}
                     >
-                      {selectedDaySpots
+                      {mapMarkerSpots
                         .filter(
                           (spot) =>
                             spot.map_x != null &&
@@ -3021,7 +3044,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                         zoom: 13,
                       }}
                     >
-                      {selectedDaySpots
+                      {mapMarkerSpots
   .filter(
     (spot) =>
       spot.map_x != null &&
