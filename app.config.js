@@ -44,6 +44,14 @@ export default {
           // 환경변수가 없을 경우를 대비해 빈 문자열 처리
           client_id: process.env.NAVER_MAP_CLIENT_ID || "" 
         }
+      ],
+      [
+        "expo-build-properties",
+        {
+          android: {
+            extraMavenRepos: ["https://repository.map.naver.com/archive/maven"]
+          }
+        }
       ]
     ],
     experiments: {
