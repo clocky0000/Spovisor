@@ -1743,6 +1743,18 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                       >
                         <ChevronRight size={16} color="#6B7280" />
                       </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.todayBtn}
+                        onPress={() => {
+                          const now = new Date();
+                          setCalendarMonth(new Date(now.getFullYear(), now.getMonth(), 1));
+                          setSelectedDate(currentDateKey);
+                          setGameViewMode('all');
+                        }}
+                      >
+                        <Text style={styles.todayBtnText}>오늘</Text>
+                      </TouchableOpacity>
                     </View>
 
                     <View style={styles.weekRow}>
@@ -3226,6 +3238,8 @@ const styles = StyleSheet.create({
   calendarContainer: { marginTop: 16, borderTopWidth: 1, borderTopColor: '#F1F5F9', paddingTop: 12 },
   calendarHeader: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 24, marginBottom: 12 },
   calNavBtn: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#F1F5F9', justifyContent: 'center', alignItems: 'center' },
+  todayBtn: { paddingHorizontal: 10, paddingVertical: 4, backgroundColor: '#F3F4F6', borderRadius: 6, marginLeft: 8 },
+  todayBtnText: { fontSize: 12, fontWeight: '600', color: '#374151' },
   calendarMonthText: { fontSize: 18, fontWeight: '900', color: '#0F0E1A' },
   todayDayCircle: { borderWidth: 1.5, borderColor: '#5B44E8' },
   weekRow: { flexDirection: 'row', justifyContent: 'space-around', marginBottom: 8 },
@@ -3727,4 +3741,5 @@ const styles = StyleSheet.create({
   
   detailFixedFooter: { padding: 16, backgroundColor: '#FFF', borderTopWidth: 1, borderTopColor: '#F1F5F9', gap: 8 },
   bookmarkOutlineBtnNew: { height: 48, borderRadius: 24, borderWidth: 1.5, borderColor: '#5B44E8', backgroundColor: '#FFF', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 6 },
+  
 });
