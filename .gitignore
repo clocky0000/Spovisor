@@ -1,2 +1,12 @@
 .env
-spo_ai/ 
+.env.*
+!.env.production.example
+# AI server source is part of the production deployment.
+# Keep only machine-local secrets and generated files out of Git.
+spo_ai/.env
+spo_ai/.env.*
+spo_ai/__pycache__/
+spo_ai/*.py[cod]
+spo_ai/.pytest_cache/
+spo_ai/.venv/
+spo_ai/venv/

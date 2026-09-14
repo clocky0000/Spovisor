@@ -29,7 +29,9 @@ PostgreSQL 볼륨은 `spovisor-postgres-data`에 저장되므로 컨테이너를
 {
   "email": "user@example.com",
   "password": "password123",
-  "nickname": "홍길동"
+  "nickname": "홍길동",
+  "termsAccepted": true,
+  "privacyAccepted": true
 }
 ```
 
@@ -78,6 +80,12 @@ AI 서버가 완성되면 추천 요청 API의 `PENDING` 요청을 기준으로 
 - `V3__create_app_user_table.sql`: 회원가입/로그인용 `app_user` 테이블 생성
 
 Flyway는 Spring Boot 시작 시 버전 순서대로 실행합니다. 이미 실행된 마이그레이션 파일을 수정하지 말고, 데이터 변경은 `V4__...sql` 같은 새 파일로 추가하세요.
+
+`V9__record_legal_consent.sql`은 가입 시 동의한 이용약관·개인정보 처리방침의 버전과 동의 시각을 저장합니다.
+
+## 운영 배포
+
+저장소 루트의 `PRODUCTION_DEPLOYMENT.md`와 `.env.production.example`을 따릅니다. 운영에서는 반드시 `prod` Spring profile을 사용해야 하며 DB, JWT, 외부 API, AI 서버 및 CORS 설정이 누락되면 시작되지 않습니다.
 
 ## 기존 로컬 PostgreSQL을 직접 사용할 때
 

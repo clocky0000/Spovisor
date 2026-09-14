@@ -8,6 +8,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
 import java.time.LocalDateTime;
+import java.util.Objects;
 
 @Entity
 @Table(name = "app_user")
@@ -34,6 +35,18 @@ public class User {
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
+
+    @Column(name = "terms_version", length = 20)
+    private String termsVersion;
+
+    @Column(name = "terms_agreed_at")
+    private LocalDateTime termsAgreedAt;
+
+    @Column(name = "privacy_version", length = 20)
+    private String privacyVersion;
+
+    @Column(name = "privacy_agreed_at")
+    private LocalDateTime privacyAgreedAt;
 
     protected User() {
     }
@@ -89,5 +102,20 @@ public class User {
 
     public void changePassword(String passwordHash) {
         this.passwordHash = passwordHash;
+    }
+
+    public void recordLegalConsent(String termsVersion, String privacyVersion) {
+        LocalDateTime agreedAt = LocalDateTime.now();
+        this.termsVersion = termsVersion;
+        this.termsAgreedAt = agreedAt;
+        this.privacyVersion = privacyVersion;
+        this.privacyAgreedAt = agreedAt;
+    }
+
+    public boolean hasLegalConsentVersions(String expectedTermsVersion, String expectedPrivacyVersion) {
+        return Objects.equals(termsVersion, expectedTermsVersion)
+                && Objects.equals(privacyVersion, expectedPrivacyVersion)
+                && termsAgreedAt != null
+                && privacyAgreedAt != null;
     }
 }

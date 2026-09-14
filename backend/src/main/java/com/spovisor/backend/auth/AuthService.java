@@ -29,9 +29,9 @@ public class AuthService {
             throw new DuplicateEmailException();
         }
 
-        User user = userRepository.save(
-                new User(email, passwordEncoder.encode(request.password()), request.nickname().trim())
-        );
+        User user = new User(email, passwordEncoder.encode(request.password()), request.nickname().trim());
+        user.recordLegalConsent(LegalDocumentVersions.TERMS, LegalDocumentVersions.PRIVACY);
+        user = userRepository.save(user);
         return toResponse(user);
     }
 

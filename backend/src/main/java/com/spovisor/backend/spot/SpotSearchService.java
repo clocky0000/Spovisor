@@ -86,6 +86,7 @@ public class SpotSearchService {
     private final String clientId;
     private final String clientSecret;
     private final String tourApiServiceKey;
+    private final boolean allowNaverImageFallback;
     private final Object imageRequestLock = new Object();
     private final Map<String, CachedImages> imageCache = new ConcurrentHashMap<>();
     private final Map<String, TourSessionCache> tourismSessionCaches = new ConcurrentHashMap<>();
@@ -101,6 +102,7 @@ public class SpotSearchService {
             @Value("${app.naver.local.client-id:}") String clientId,
             @Value("${app.naver.local.client-secret:}") String clientSecret,
             @Value("${app.tour-api.service-key:}") String tourApiServiceKey,
+            @Value("${app.images.allow-naver-fallback:false}") boolean allowNaverImageFallback,
             @Value("${ai.server.url:http://localhost:5000}") String aiServerUrl
     ) {
         this.naverRestClient = restClientBuilder.clone()
@@ -126,6 +128,7 @@ public class SpotSearchService {
         this.clientId = clientId;
         this.clientSecret = clientSecret;
         this.tourApiServiceKey = tourApiServiceKey;
+        this.allowNaverImageFallback = allowNaverImageFallback;
     }
 
     public List<SpotSearchResponse> search(String query) {
@@ -238,6 +241,10 @@ public class SpotSearchService {
                 continue;
             }
 
+            if (!allowNaverImageFallback) {
+                results.add(new SpotImageBatchResponse(spot.id(), "NONE", List.of()));
+                continue;
+            }
             List<SpotImageResponse> naverImages = searchNaverImages(
                     spot.name(),
                     lookup.regionHint(),
@@ -258,6 +265,7 @@ public class SpotSearchService {
     }
 
     public List<SpotImageResponse> searchImages(String query) {
+        if (!allowNaverImageFallback) return List.of();
         return searchNaverImages(query, "", "");
     }
 

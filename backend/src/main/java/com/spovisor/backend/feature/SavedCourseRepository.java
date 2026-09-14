@@ -8,4 +8,5 @@ import java.util.Optional;
 public interface SavedCourseRepository extends JpaRepository<SavedCourse, Long> {
     List<SavedCourse> findAllByUserIdOrderBySavedAtDesc(Long userId);
     Optional<SavedCourse> findByIdAndUserId(Long id, Long userId);
+    boolean existsByUserIdAndTitle(Long userId, String title);
 }

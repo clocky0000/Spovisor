@@ -1,0 +1,4 @@
+CREATE TABLE app_seed_history (
+    seed_key VARCHAR(100) PRIMARY KEY,
+    applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

@@ -29,6 +29,8 @@ services:
     build:
       context: backend
     container_name: spovisor-backend
+    env_file:
+      - .env.onestore-review
     environment:
       DB_URL: jdbc:postgresql://postgres:5432/spovisor
       DB_USERNAME: spovisor

@@ -21,6 +21,8 @@ spring:
     locations: classpath:db/migration
 
 app:
+  cors:
+    allowed-origin-patterns: ${CORS_ALLOWED_ORIGIN_PATTERNS:*}
   jwt:
     secret: ${JWT_SECRET:change-this-local-secret-to-a-long-random-value-123456789}
     expiration-ms: ${JWT_EXPIRATION_MS:86400000}
@@ -30,6 +32,24 @@ app:
       client-secret: ${NAVER_CLIENT_SECRET:}
   tour-api:
     service-key: ${TOUR_API_SERVICE_KEY:}
+  images:
+    allow-naver-fallback: ${ALLOW_NAVER_IMAGE_FALLBACK:false}
+  reviewer-account:
+    enabled: ${REVIEWER_ACCOUNT_ENABLED:false}
+    email: ${REVIEWER_ACCOUNT_EMAIL:}
+    password: ${REVIEWER_ACCOUNT_PASSWORD:}
+    nickname: ${REVIEWER_ACCOUNT_NICKNAME:민서}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
 
 logging:
   level:
