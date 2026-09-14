@@ -574,6 +574,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
   const [gameViewMode, setGameViewMode] = useState<'all' | 'favorites'>('all');
   const [selectedMapDay, setSelectedMapDay] = useState<number | 'all'>(1);
   const [selectedMapSpotId, setSelectedMapSpotId] = useState<number | null>(null);
+  const [isMapSelectorOpen, setIsMapSelectorOpen] = useState(true);
 
   const mapRef = useRef<NaverMapViewRef>(null);
 
@@ -2580,42 +2581,73 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                 <View style={styles.detailMapArea}>
                   {/* DAY 선택 버튼 */}
                   <View style={styles.mapDaySelector}>
-                    <TouchableOpacity
-                        style={[
-                          styles.mapDayButton,
-                          selectedMapDay === 'all' && styles.mapDayButtonActive,
-                        ]}
-                        onPress={() => handleMapDayChange('all')}
-                      >
-                        <Text
-                          style={[
-                            styles.mapDayButtonText,
-                            selectedMapDay === 'all' && styles.mapDayButtonTextActive,
-                          ]}
-                        >
-                          전체
-                        </Text>
-                      </TouchableOpacity>
-                    {mapDays.map((day) => (
-                      <TouchableOpacity
-                        key={`map-day-${day}`}
-                        style={[
-                          styles.mapDayButton,
-                          selectedMapDay === day && styles.mapDayButtonActive,
-                        ]}
-                        onPress={() => handleMapDayChange(day)}
-                      >
-                        <Text
-                          style={[
-                            styles.mapDayButtonText,
-                            selectedMapDay === day && styles.mapDayButtonTextActive,
-                          ]}
-                        >
-                          DAY {day}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
+  <TouchableOpacity
+    style={styles.mapDayToggle}
+    onPress={() => setIsMapSelectorOpen((prev) => !prev)}
+    activeOpacity={0.8}
+  >
+    <Text style={styles.mapDayToggleText}>
+      {selectedMapDay === 'all'
+        ? '전체'
+        : `DAY ${selectedMapDay}`}
+    </Text>
+
+    <Text style={styles.mapDayToggleIcon}>
+      {isMapSelectorOpen ? '▲' : '▼'}
+    </Text>
+  </TouchableOpacity>
+
+  {isMapSelectorOpen && (
+    <View style={styles.mapDayOptions}>
+      <TouchableOpacity
+        style={styles.mapDayOption}
+        onPress={() => {
+          handleMapDayChange('all');
+          setIsMapSelectorOpen(false);
+        }}
+      >
+        <Text
+          style={[
+            styles.mapDayOptionText,
+            selectedMapDay === 'all' &&
+              styles.mapDayOptionTextActive,
+          ]}
+        >
+          전체
+        </Text>
+
+        {selectedMapDay === 'all' && (
+          <Text style={styles.mapDayCheck}>✓</Text>
+        )}
+      </TouchableOpacity>
+
+      {mapDays.map((day) => (
+        <TouchableOpacity
+          key={`map-day-${day}`}
+          style={styles.mapDayOption}
+          onPress={() => {
+            handleMapDayChange(day);
+            setIsMapSelectorOpen(false);
+          }}
+        >
+          <Text
+            style={[
+              styles.mapDayOptionText,
+              selectedMapDay === day &&
+                styles.mapDayOptionTextActive,
+            ]}
+          >
+            DAY {day}
+          </Text>
+
+          {selectedMapDay === day && (
+            <Text style={styles.mapDayCheck}>✓</Text>
+          )}
+        </TouchableOpacity>
+      ))}
+    </View>
+  )}
+</View>
                   {Platform.OS === 'web' ? (
                     /* 🌐 웹일 때는 구글 맵과 기존 오버레이를 보여줌 */
                     (() => {
@@ -2761,12 +2793,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
               onPress={() => handleMapSpotSelect(spot)}
               style={[
                 styles.timelineItemRow,
-                isSelected && {
-                  backgroundColor: '#F5F3FF',
-                  borderRadius: 14,
-                  paddingVertical: 8,
-                  paddingHorizontal: 6,
-                },
+                isSelected && styles.timelineItemRowSelected,
               ]}
             >
               {/* 왼쪽 번호 */}
@@ -2775,10 +2802,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                 <View
                   style={[
                     styles.timelineOrangePin,
-                    isSelected && {
-                      backgroundColor: '#5B44E8',
-                      transform: [{ scale: 1.12 }],
-                    },
+                    isSelected && styles.timelineSelectedPin,
                   ]}
                 >
                   <Text style={styles.timelinePinTextWhite}>
@@ -2967,43 +2991,73 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                   {/* DAY 선택 버튼 */}
                   {mapDays.length > 0 && (
                     <View style={styles.mapDaySelector}>
-                      <TouchableOpacity
-                        style={[
-                          styles.mapDayButton,
-                          selectedMapDay === 'all' && styles.mapDayButtonActive,
-                        ]}
-                        onPress={() => handleMapDayChange('all')}
-                      >
-                        <Text
-                          style={[
-                            styles.mapDayButtonText,
-                            selectedMapDay === 'all' && styles.mapDayButtonTextActive,
-                          ]}
-                        >
-                          전체
-                        </Text>
-                      </TouchableOpacity>
-                      {mapDays.map((day) => (
-                        <TouchableOpacity
-                          key={`map-day-${day}`}
-                          style={[
-                            styles.mapDayButton,
-                            selectedMapDay === day && styles.mapDayButtonActive,
-                          ]}
-                          onPress={() => handleMapDayChange(day)}
-                        >
-                          <Text
-                            style={[
-                              styles.mapDayButtonText,
-                              selectedMapDay === day &&
-                                styles.mapDayButtonTextActive,
-                            ]}
-                          >
-                            DAY {day}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
+  <TouchableOpacity
+    style={styles.mapDayToggle}
+    onPress={() => setIsMapSelectorOpen((prev) => !prev)}
+    activeOpacity={0.8}
+  >
+    <Text style={styles.mapDayToggleText}>
+      {selectedMapDay === 'all'
+        ? '전체'
+        : `DAY ${selectedMapDay}`}
+    </Text>
+
+    <Text style={styles.mapDayToggleIcon}>
+      {isMapSelectorOpen ? '▲' : '▼'}
+    </Text>
+  </TouchableOpacity>
+
+  {isMapSelectorOpen && (
+    <View style={styles.mapDayOptions}>
+      <TouchableOpacity
+        style={styles.mapDayOption}
+        onPress={() => {
+          handleMapDayChange('all');
+          setIsMapSelectorOpen(false);
+        }}
+      >
+        <Text
+          style={[
+            styles.mapDayOptionText,
+            selectedMapDay === 'all' &&
+              styles.mapDayOptionTextActive,
+          ]}
+        >
+          전체
+        </Text>
+
+        {selectedMapDay === 'all' && (
+          <Text style={styles.mapDayCheck}>✓</Text>
+        )}
+      </TouchableOpacity>
+
+      {mapDays.map((day) => (
+        <TouchableOpacity
+          key={`map-day-${day}`}
+          style={styles.mapDayOption}
+          onPress={() => {
+            handleMapDayChange(day);
+            setIsMapSelectorOpen(false);
+          }}
+        >
+          <Text
+            style={[
+              styles.mapDayOptionText,
+              selectedMapDay === day &&
+                styles.mapDayOptionTextActive,
+            ]}
+          >
+            DAY {day}
+          </Text>
+
+          {selectedMapDay === day && (
+            <Text style={styles.mapDayCheck}>✓</Text>
+          )}
+        </TouchableOpacity>
+      ))}
+    </View>
+  )}
+</View>
                   )}
                   {Platform.OS === 'web' ? (
                     /* 🌐 웹일 때는 구글 맵에 첫 번째 장소명을 검색어로 전달하여 핀이 정확히 꽂히게 합니다 */
@@ -3132,12 +3186,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                                 style={[
                                   styles.timelineItemRow,
 
-                                  isSelected && {
-                                    backgroundColor: '#F5F3FF',
-                                    borderRadius: 14,
-                                    paddingVertical: 8,
-                                    paddingHorizontal: 6,
-                                  },
+                                  isSelected && styles.timelineItemRowSelected,
                                 ]}
                               >
               <View style={styles.timelineLeftCol}>
@@ -3146,12 +3195,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                   style={[
                     styles.timelineOrangePin,
 
-                    isSelected && {
-                      backgroundColor: '#5B44E8',
-                      transform: [
-                        { scale: 1.12 },
-                      ],
-                    },
+                    isSelected && styles.timelineSelectedPin,
                   ]}
                 >
                   <Text
@@ -4209,11 +4253,20 @@ const styles = StyleSheet.create({
   bottomSheetContent: { padding: 24, paddingBottom: 40 },
   bottomSheetTitle: { fontSize: 19, fontWeight: '900', color: '#111827', marginTop: 4, textAlign: 'center' },
 
-  timelineItemRow: { flexDirection: 'row', gap: 16 },
-  timelineLeftCol: { alignItems: 'center', width: 26 },
   timelineYellowPin: { width: 26, height: 26, borderRadius: 13, backgroundColor: '#FDE047', justifyContent: 'center', alignItems: 'center', zIndex: 1 },
   timelinePinText: { color: '#374151', fontSize: 12, fontWeight: '900' },
-  timelineVerticalLine: { width: 2, flex: 1, backgroundColor: '#E5E7EB', marginVertical: -4, zIndex: 0 },
+  timelineVerticalLineSolid: {
+  position: 'absolute',
+
+  top: 34,
+  bottom: 0,
+
+  width: 2,
+
+  backgroundColor: '#20B486',
+
+  zIndex: 1,
+},
 
   timelineContentCol: { flex: 1, paddingBottom: 24 },
   categoryPill: { backgroundColor: '#F3F4F6', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
@@ -4243,11 +4296,23 @@ const styles = StyleSheet.create({
   detailTimelineSheet: { flex: 1, backgroundColor: '#FFF', borderTopLeftRadius: 30, borderTopRightRadius: 30, marginTop: -30, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 10, elevation: 5, paddingTop: 12 },
   activeCourseTimelineSheet: { marginTop: -4 },
   bottomSheetTitleCenter: { fontSize: 18, fontWeight: '900', color: '#111827', textAlign: 'center', marginBottom: 10 },
-  
-  timelineOrangePin: { width: 26, height: 26, borderRadius: 13, backgroundColor: '#10B981', justifyContent: 'center', alignItems: 'center', zIndex: 1 },
+ 
+  timelineOrangePin: {
+    width: 34,
+    height: 34,
+
+  borderRadius: 17,
+
+  backgroundColor: '#20B486',
+
+  alignItems: 'center',
+  justifyContent: 'center',
+
+  zIndex: 2,
+},
   timelinePinTextWhite: { color: '#FFF', fontSize: 12, fontWeight: '900' },
-  timelineVerticalLineSolid: { width: 2, flex: 1, backgroundColor: '#10B981', marginVertical: -2, zIndex: 0 },
-  timelineContentColNew: { flex: 1, paddingBottom: 30, paddingLeft: 8 },
+  timelineContentColNew: { flex: 1, paddingBottom: 16, paddingLeft: 4 },
+  timelineSelectedPin: { backgroundColor: '#5B44E8', transform: [{ scale: 1.12 }]},
   
   categoryTextGreyNew: { fontSize: 11, color: '#6B7280', fontWeight: '800', backgroundColor: '#F1F5F9', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
   timelineItemTitleLargeNew: { fontSize: 16, fontWeight: '900', color: '#111827' },
@@ -4259,14 +4324,14 @@ const styles = StyleSheet.create({
   position: 'absolute',
   top: 12,
   left: 16,
-  right: 16,
-  zIndex: 10,
-  flexDirection: 'row',
-  gap: 8,
+  zIndex: 100,
+
+  width: 120,
+
   backgroundColor: '#FFFFFF',
-  padding: 6,
-  borderRadius: 14,
-  elevation: 4,
+  borderRadius: 12,
+
+  elevation: 5,
   shadowColor: '#000',
   shadowOffset: {
     width: 0,
@@ -4276,27 +4341,81 @@ const styles = StyleSheet.create({
   shadowRadius: 6,
 },
 
-mapDayButton: {
-  flex: 1,
-  paddingVertical: 9,
+mapDayToggle: {
+  height: 42,
+  width: '100%',
+  paddingHorizontal: 14,
+  flexDirection: 'row',
   alignItems: 'center',
-  justifyContent: 'center',
-  borderRadius: 9,
-  backgroundColor: '#F1F5F9',
+  justifyContent: 'space-between',
 },
 
-mapDayButtonActive: {
-  backgroundColor: '#5B44E8',
-},
-
-mapDayButtonText: {
+mapDayToggleText: {
   fontSize: 13,
-  fontWeight: '700',
+  fontWeight: '800',
+  color: '#5B44E8',
+},
+
+mapDayToggleIcon: {
+  marginLeft: 10,
+  fontSize: 9,
   color: '#64748B',
 },
 
-mapDayButtonTextActive: {
-  color: '#FFFFFF',
+mapDayOptions: {
+  borderTopWidth: 1,
+  borderTopColor: '#F1F5F9',
+  paddingVertical: 4,
+},
+
+mapDayOption: {
+  height: 38,
+  width: '100%',
+  paddingHorizontal: 14,
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+},
+
+mapDayOptionText: {
+  fontSize: 13,
+  fontWeight: '600',
+  color: '#475569',
+},
+
+mapDayOptionTextActive: {
+  color: '#5B44E8',
+  fontWeight: '800',
+},
+
+mapDayCheck: {
+  fontSize: 14,
+  fontWeight: '800',
+  color: '#5B44E8',
+},
+
+timelineItemRow: {
+  position: 'relative',
+  flexDirection: 'row',
+  alignItems: 'stretch',
+
+  minHeight: 120,
+
+  marginBottom: 0,
+  paddingVertical: 0,
+},
+
+timelineItemRowSelected: {
+  backgroundColor: '#F5F3FF',
+  borderRadius: 14,
+},
+
+timelineLeftCol: {
+  width: 58,
+
+  alignItems: 'center',
+
+  position: 'relative',
 },
   
 });
