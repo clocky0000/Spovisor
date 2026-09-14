@@ -36,8 +36,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   addFavoritePlace,
   changePassword,
-  clearCourseSpotImageCache,
   clearAuthSession,
+  clearCourseSpotImageCache,
   createRecommendationRequest,
   createTrip,
   deleteFavoritePlace,
@@ -581,8 +581,6 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
   const [tripTiming, setTripTiming] = useState<string>('경기 전');
 
   const [transport, setTransport] = useState<string[]>(['대중교통']);
-  const [maxTime, setMaxTime] = useState<string>('1시간');
-  const [walkDist, setWalkDist] = useState<string>('20분 이내');
 
   const [companion, setCompanion] = useState<string>('홀로여행');
   const [extraCompanion, setExtraCompanion] = useState<string[]>([]);
@@ -988,8 +986,6 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
     '연전관람여부': watchConsecutiveGames && consecutiveGamesList.length > 0 ? '예' : '아니오',
     '추가관람경기_일정': watchConsecutiveGames ? consecutiveGamesList.map(g => `${g.date} ${g.time}`) : [],
     '이동방식': transport.includes('자차') ? '자차+도보' : transport.includes('대중교통') ? '대중교통+도보' : '도보 단독',
-    '최대이동시간': maxTime,
-    '걷는거리': walkDist.replace('이하', '이내'),
     '동행': companion,
     '추가동행': extraCompanion,
     '컨셉': concept ?? '미식 탐방형',
@@ -1065,8 +1061,6 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
     setArrivalTime('1시간 전');
     setTripTiming('경기 전');
     setTransport(['대중교통']);
-    setMaxTime('1시간');
-    setWalkDist('20분 이내');
     setCompanion('홀로여행');
     setExtraCompanion([]);
     setConcept('미식 탐방형');
@@ -2078,24 +2072,6 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                     ))}
                   </View>
                   {transport.includes('대중교통') && transport.includes('자차') && <Text style={styles.transportErrorText}>대중교통과 자동차는 함께 선택할 수 없습니다.</Text>}
-
-                  <Text style={styles.inputLabel}>최대 이동 가능 시간</Text>
-                  <View style={{ flexDirection: 'row', gap: 8 }}>
-                    {['30분', '1시간', '1시간 30분', '2시간', '3시간'].map((t) => (
-                      <TouchableOpacity key={t} onPress={() => setMaxTime(t)} style={[styles.outlineBtn, maxTime === t && styles.outlineBtnActive]}>
-                        <Text style={[styles.outlineBtnText, maxTime === t && styles.outlineBtnTextActive]}>{t}</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-
-                  <Text style={styles.inputLabel}>걷는 거리</Text>
-                  <View style={{ flexDirection: 'row', gap: 8 }}>
-                    {['10분 이내', '20분 이내', '30분 이내', '상관없음'].map((t) => (
-                      <TouchableOpacity key={t} onPress={() => setWalkDist(t)} style={[styles.outlineBtn, walkDist === t && styles.outlineBtnActive]}>
-                        <Text style={[styles.outlineBtnText, walkDist === t && styles.outlineBtnTextActive]}>{t}</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
                 </ScrollView>
 
                 <View style={styles.footer}>
@@ -2127,21 +2103,31 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                       { id: '친구와 여행', emoji: '👫' },
                       { id: '연인과의 여행', emoji: '💑' },
                       { id: '가족여행', emoji: '👨‍👩‍👧' },
-                    ].map((item) => (
-                      <TouchableOpacity
+                    ].map((item) => {
+                      const isSelected = companion === item.id;
+
+                      return (
+                        <TouchableOpacity
                         key={item.id}
                         onPress={() => setCompanion(item.id)}
-                        style={[styles.companionCard, companion === item.id && styles.companionCardActive]}
+                        style={[styles.companionCard, isSelected && styles.companionCardActive]}
                       >
                         <Text style={{ fontSize: 32 }}>{item.emoji}</Text>
-                        <Text style={[styles.companionText, companion === item.id && { color: '#5B44E8' }]}>{item.id}</Text>
-                        {companion === item.id && (
-                          <View style={styles.checkCircle}>
-                            <Check size={10} color="#FFF" strokeWidth={3} />
-                          </View>
-                        )}
+                        <Text style={[styles.companionText, isSelected && { color: '#5B44E8' }]}>{item.id}</Text>
+                        
+                        <View
+                          style={[
+                            styles.companionRadio,
+                            isSelected && styles.companionRadioActive,
+                          ]}
+                        >
+                          {isSelected && (
+                            <View style={styles.companionRadioInner} />
+                          )}
+                        </View>
                       </TouchableOpacity>
-                    ))}
+                      );
+                    })}
                   </View>
 
                   <Text style={[styles.inputLabel, { marginTop: 16 }]}>추가로 고려할 동행이 있나요?</Text>
@@ -3347,7 +3333,30 @@ const styles = StyleSheet.create({
   companionCard: { width: '48%', height: 110, borderRadius: 16, borderWidth: 1.5, borderColor: '#E2E8F0', backgroundColor: '#FFF', justifyContent: 'center', alignItems: 'center', gap: 6, position: 'relative' },
   companionCardActive: { borderColor: '#5B44E8', backgroundColor: '#EEF2FF' },
   companionText: { fontSize: 13, fontWeight: 'bold', color: '#4B5563' },
-  checkCircle: { position: 'absolute', bottom: 10, width: 18, height: 18, borderRadius: 9, backgroundColor: '#5B44E8', justifyContent: 'center', alignItems: 'center' },
+  companionRadio: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 2,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  companionRadioActive: {
+    borderColor: '#5B44E8',
+  },
+
+  companionRadioInner: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#5B44E8',
+  },
 
   extraRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', padding: 14, borderRadius: 16, borderWidth: 1, borderColor: '#F1F5F9', marginBottom: 8 },
   radioEmpty: { width: 18, height: 18, borderRadius: 9, borderWidth: 1.5, borderColor: '#CBD5E1' },
