@@ -1,9 +1,16 @@
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 
-const configuredApiUrl = process.env.EXPO_PUBLIC_API_URL;
-export const API_BASE_URL = configuredApiUrl
-  ?? (Platform.OS === 'android' ? 'http://10.0.2.2:8080/api' : 'http://localhost:8080/api');
+const configuredApiUrl = process.env.EXPO_PUBLIC_API_URL?.trim().replace(/\/+$/, '');
+const developmentApiUrl = Platform.OS === 'android'
+  ? 'http://10.0.2.2:8080/api'
+  : 'http://localhost:8080/api';
+
+export const API_BASE_URL = configuredApiUrl || developmentApiUrl;
+const API_CONFIGURATION_ERROR = !__DEV__ && (!configuredApiUrl || !configuredApiUrl.startsWith('https://'))
+  ? '운영 서버 설정이 올바르지 않습니다. 고객센터로 문의해주세요.'
+  : null;
+const REQUEST_TIMEOUT_MS = 30_000;
 
 const AUTH_STORAGE_KEY = 'spovisor.auth';
 
@@ -109,8 +116,11 @@ export async function loadAuthSession(): Promise<AuthResponse | null> {
 export function clearAuthSession() { return writeStoredValue(null); }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  if (API_CONFIGURATION_ERROR) throw new Error(API_CONFIGURATION_ERROR);
   const auth = options.auth ?? true;
   const session = auth ? await loadAuthSession() : null;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   let response: Response;
   try {
     response = await fetch(`${API_BASE_URL}${path}`, {
@@ -120,19 +130,33 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
         ...(session?.accessToken ? { Authorization: `Bearer ${session.accessToken}` } : {}),
       },
       ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+      signal: controller.signal,
     });
-  } catch { throw new Error('백엔드에 연결할 수 없습니다. 서버가 실행 중인지 확인해주세요.'); }
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error('요청 시간이 초과되었습니다. 네트워크 상태를 확인한 뒤 다시 시도해주세요.');
+    }
+    throw new Error('서비스에 연결할 수 없습니다. 네트워크 상태를 확인한 뒤 다시 시도해주세요.');
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   const payload = await response.json().catch(() => undefined);
   if (!response.ok) {
+    if (response.status === 401 && auth) await clearAuthSession();
     const error = payload as ApiError | undefined;
+    if (response.status >= 500) throw new Error('일시적인 서버 오류입니다. 잠시 후 다시 시도해주세요.');
     throw new Error(error?.message ?? '요청을 처리하지 못했습니다.');
   }
   return payload as T;
 }
 
 export function signup(email: string, password: string, nickname: string) {
-  return request<AuthResponse>('/auth/signup', { method: 'POST', body: { email, password, nickname }, auth: false });
+  return request<AuthResponse>('/auth/signup', {
+    method: 'POST',
+    body: { email, password, nickname, termsAccepted: true, privacyAccepted: true },
+    auth: false,
+  });
 }
 
 export function login(email: string, password: string) {

@@ -22,6 +22,8 @@ export default function AuthScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [nickname, setNickname] = useState('');
+  const [termsAccepted, setTermsAccepted] = useState(false);
+  const [privacyAccepted, setPrivacyAccepted] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -42,6 +44,10 @@ export default function AuthScreen() {
     }
     if (isSignup && password.length < 8) {
       setErrorMessage('비밀번호는 8자 이상이어야 합니다.');
+      return;
+    }
+    if (isSignup && (!termsAccepted || !privacyAccepted)) {
+      setErrorMessage('필수 약관과 개인정보 수집·이용에 동의해주세요.');
       return;
     }
 
@@ -97,6 +103,23 @@ export default function AuthScreen() {
               <TextInput value={password} onChangeText={setPassword} placeholder={isSignup ? '8자 이상 입력' : '비밀번호 입력'} placeholderTextColor="#A1A1AA" style={styles.input} secureTextEntry autoCapitalize="none" textContentType="password" />
             </View>
 
+            {isSignup && (
+              <View style={styles.consentGroup}>
+                <ConsentRow
+                  checked={termsAccepted}
+                  label="[필수] 서비스 이용약관 동의"
+                  onToggle={() => setTermsAccepted((value) => !value)}
+                  onOpen={() => router.push('/terms' as never)}
+                />
+                <ConsentRow
+                  checked={privacyAccepted}
+                  label="[필수] 개인정보 수집·이용 동의"
+                  onToggle={() => setPrivacyAccepted((value) => !value)}
+                  onOpen={() => router.push('/privacy' as never)}
+                />
+              </View>
+            )}
+
             {!!errorMessage && <Text style={styles.error}>{errorMessage}</Text>}
             <Pressable style={[styles.submitButton, isSubmitting && styles.disabledButton]} onPress={submit} disabled={isSubmitting}>
               {isSubmitting ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.submitText}>{isSignup ? '회원가입하기' : '로그인하기'}</Text>}
@@ -105,6 +128,38 @@ export default function AuthScreen() {
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
+  );
+}
+
+function ConsentRow({
+  checked,
+  label,
+  onToggle,
+  onOpen,
+}: {
+  checked: boolean;
+  label: string;
+  onToggle: () => void;
+  onOpen: () => void;
+}) {
+  return (
+    <View style={styles.consentRow}>
+      <Pressable
+        accessibilityRole="checkbox"
+        accessibilityState={{ checked }}
+        accessibilityLabel={label}
+        style={[styles.checkbox, checked && styles.checkboxChecked]}
+        onPress={onToggle}
+      >
+        {checked && <Text style={styles.checkmark}>✓</Text>}
+      </Pressable>
+      <Pressable style={styles.consentLabelButton} onPress={onToggle}>
+        <Text style={styles.consentLabel}>{label}</Text>
+      </Pressable>
+      <Pressable accessibilityRole="link" onPress={onOpen}>
+        <Text style={styles.viewLink}>보기</Text>
+      </Pressable>
+    </View>
   );
 }
 
@@ -125,6 +180,14 @@ const styles = StyleSheet.create({
   fieldGroup: { marginBottom: 16 },
   label: { marginBottom: 8, color: '#27233F', fontSize: 13, fontWeight: '800' },
   input: { height: 50, paddingHorizontal: 14, borderWidth: 1, borderColor: '#E4E4E7', borderRadius: 12, color: '#18181B', backgroundColor: '#FFFFFF' },
+  consentGroup: { gap: 12, marginBottom: 18 },
+  consentRow: { flexDirection: 'row', alignItems: 'center' },
+  checkbox: { width: 22, height: 22, borderWidth: 1.5, borderColor: '#A1A1AA', borderRadius: 6, alignItems: 'center', justifyContent: 'center' },
+  checkboxChecked: { borderColor: '#5B44E8', backgroundColor: '#5B44E8' },
+  checkmark: { color: '#FFFFFF', fontSize: 14, fontWeight: '900' },
+  consentLabelButton: { flex: 1, paddingHorizontal: 9, paddingVertical: 4 },
+  consentLabel: { color: '#3F3A58', fontSize: 12, lineHeight: 18 },
+  viewLink: { color: '#5B44E8', fontSize: 12, fontWeight: '800', textDecorationLine: 'underline' },
   error: { marginBottom: 14, color: '#DC2626', fontSize: 12, lineHeight: 18 },
   submitButton: { height: 52, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: '#5B44E8' },
   disabledButton: { opacity: 0.65 },

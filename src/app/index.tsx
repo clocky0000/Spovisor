@@ -1,5 +1,4 @@
 import { NaverMapMarkerOverlay, NaverMapView, type NaverMapViewRef } from '@mj-studio/react-native-naver-map';
-import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import {
   Accessibility,
@@ -41,6 +40,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  AppState,
   Modal,
   Platform,
   ScrollView,
@@ -55,7 +55,6 @@ import {
   addFavoritePlace,
   changePassword,
   clearAuthSession,
-  clearCourseSpotImageCache,
   createRecommendationRequest,
   createTrip,
   deleteFavoritePlace,
@@ -69,9 +68,7 @@ import {
   loadAuthSession,
   replaceFavoriteTeams,
   saveAuthSession,
-  saveTripImageSnapshot,
   saveUserSurvey,
-  searchCourseSpotImages,
   searchSpots,
   submitTripFeedback,
   updateMyProfile,
@@ -109,10 +106,26 @@ type FlowStep =
 
 type Game = ScheduleGame;
 
-const currentDateKey = (() => {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-})();
+const KOREA_TIME_OFFSET_MS = 9 * 60 * 60 * 1000;
+
+function getCurrentKoreaDateParts() {
+  const koreaNow = new Date(Date.now() + KOREA_TIME_OFFSET_MS);
+  return {
+    year: koreaNow.getUTCFullYear(),
+    monthIndex: koreaNow.getUTCMonth(),
+    day: koreaNow.getUTCDate(),
+  };
+}
+
+function getCurrentDateKey() {
+  const { year, monthIndex, day } = getCurrentKoreaDateParts();
+  return `${year}-${String(monthIndex + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function getCurrentCalendarMonth() {
+  const { year, monthIndex } = getCurrentKoreaDateParts();
+  return new Date(year, monthIndex, 1);
+}
 
 const COURSE_CREATION_FLOWS = new Set<FlowStep>([
   'gameInfo',
@@ -142,7 +155,7 @@ const COMPANION_OPTIONS = [
 const EXTRA_COMPANION_OPTIONS = [
   { title: '영유아 동반', desc: '유모차, 수유실, 놀이공간 고려', icon: Baby },
   { title: '고령자 동반', desc: '엘리베이터, 쉼터, 경사로 우선', icon: HandHeart },
-  { title: '장애인·교통약자 동반', desc: '배리어프리 경로 우선 안내', icon: Accessibility },
+  { title: '무장애 동선 필요', desc: '계단과 장거리 이동을 줄인 경로 우선 안내', icon: Accessibility },
   { title: '반려동물 동반', desc: '펫 프렌들리 시설 및 경로 안내', icon: PawPrint },
 ] as const;
 
@@ -180,7 +193,6 @@ interface CourseSpot {
   map_x?: string | null;
   map_y?: string | null;
   day?: number;
-  imageUrls?: string[];
 }
 
 interface Course {
@@ -198,11 +210,6 @@ interface Course {
   saved: boolean;
 }
 
-type SpotImageLoadStatus = 'loading' | 'loaded' | 'unavailable';
-type RecommendationLoadingStage = 'course' | 'images';
-
-const IMAGE_CACHE_SESSION_TTL_MS = 30 * 60 * 1000;
-
 const getDepartureTimeValidationMessage = (value: string) => {
   const match = /^(\d{2}):(\d{2})$/.exec(value);
   if (!match) return '시간을 HH:MM 형식으로 입력해주세요.';
@@ -216,9 +223,6 @@ const formatDepartureTimeInput = (value: string) => {
   const digits = value.replace(/[^0-9]/g, '').slice(0, 4);
   return digits.length > 2 ? `${digits.slice(0, 2)}:${digits.slice(2)}` : digits;
 };
-
-const createImageCacheSessionId = (prefix: string) =>
-  `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 11)}`;
 
 type MapRoutePoint = { x: number; y: number };
 
@@ -377,7 +381,7 @@ const CUSTOM_RATIO_STYLE = {
 // ─────────────────────────────────────────────────────────
 
 const GAMES: Game[] = OFFICIAL_GAMES;
-const initialGame = GAMES.find((game) => game.date === currentDateKey) ?? GAMES[0];
+const initialGame = GAMES.find((game) => game.date === getCurrentDateKey()) ?? GAMES[0];
 const MAX_INCLUDED_PLACE_DISTANCE_KM = 60;
 
 function dateKey(year: number, monthIndex: number, day: number) {
@@ -633,8 +637,8 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
   const [favoriteTeamDraftSport, setFavoriteTeamDraftSport] = useState<Sport>('baseball');
   const [favoriteTeamDraftName, setFavoriteTeamDraftName] = useState('');
   const [favoriteTeamDraftNickname, setFavoriteTeamDraftNickname] = useState('');
-  const favoriteTeamSheetY = useRef(new Animated.Value(420)).current;
-  const favoriteTeamBackdropOpacity = useRef(new Animated.Value(0)).current;
+  const [favoriteTeamSheetY] = useState(() => new Animated.Value(420));
+  const [favoriteTeamBackdropOpacity] = useState(() => new Animated.Value(0));
   const [accountNicknameDraft, setAccountNicknameDraft] = useState(initialUser.nickname);
   const [accountCurrentPassword, setAccountCurrentPassword] = useState('');
   const [accountNewPassword, setAccountNewPassword] = useState('');
@@ -648,8 +652,11 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
   const [origin, setOrigin] = useState('');
   const [originName, setOriginName] = useState('');
   const [originCoordinates, setOriginCoordinates] = useState<{ latitude: number; longitude: number } | null>(null);
-  const [calendarMonth, setCalendarMonth] = useState(() => { const now = new Date(); return new Date(now.getFullYear(), now.getMonth(), 1); });
-  const [selectedDate, setSelectedDate] = useState<string>(() => { const now = new Date(); return dateKey(now.getFullYear(), now.getMonth(), now.getDate()); });
+  const [currentDateKey, setCurrentDateKey] = useState(getCurrentDateKey);
+  const [calendarMonth, setCalendarMonth] = useState(getCurrentCalendarMonth);
+  const [selectedDate, setSelectedDate] = useState<string>(getCurrentDateKey);
+  const currentDateKeyRef = useRef(currentDateKey);
+  const selectedDateRef = useRef(selectedDate);
   const [selectedGame, setSelectedGame] = useState<Game | null>(initialGame);
   const [stadiumCoordinates, setStadiumCoordinates] = useState<{ latitude: number; longitude: number } | null>(null);
   const [gameViewMode, setGameViewMode] = useState<'all' | 'favorites'>('all');
@@ -688,8 +695,8 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
   const [isSearchingOrigin, setIsSearchingOrigin] = useState(false);
   const [favoritePlaceLabel, setFavoritePlaceLabel] = useState('');
   const [favoritePlaceSheet, setFavoritePlaceSheet] = useState<'save' | 'manage' | null>(null);
-  const favoritePlaceSheetY = useRef(new Animated.Value(420)).current;
-  const favoritePlaceBackdropOpacity = useRef(new Animated.Value(0)).current;
+  const [favoritePlaceSheetY] = useState(() => new Animated.Value(420));
+  const [favoritePlaceBackdropOpacity] = useState(() => new Animated.Value(0));
   const [isSavingFavoritePlace, setIsSavingFavoritePlace] = useState(false);
   const [deletingFavoritePlaceId, setDeletingFavoritePlaceId] = useState<number | null>(null);
   const [tripDuration, setTripDuration] = useState<string>('당일치기');
@@ -727,12 +734,6 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
   // AI 모델 연동 전까지는 추천 결과를 비워둡니다.
   const [courses, setCourses] = useState<Course[]>([]);
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
-  const [spotImages, setSpotImages] = useState<Record<number, string[]>>({});
-  const [spotImageStatuses, setSpotImageStatuses] = useState<Record<number, SpotImageLoadStatus>>({});
-  const [recommendationLoadingStage, setRecommendationLoadingStage] = useState<RecommendationLoadingStage>('course');
-  const imageCacheSessionRef = useRef<string | null>(null);
-  const spotImageContextRef = useRef<string | null>(null);
-  const spotImageContextExpiresAtRef = useRef(0);
   const [expandedCourseId, setExpandedCourseId] = useState<number | null>(1);
   const [selectedPreset, setSelectedPreset] = useState<PresetCourse>(PRESET_COURSES[0]);
   const [selectedHistoryTrip, setSelectedHistoryTrip] = useState<Trip | null>(null);
@@ -753,7 +754,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
     return tripList
       .filter((trip) => trip.status === 'ACTIVE' && trip.course && (!trip.tripDate || trip.tripDate >= currentDateKey))
       .sort((a, b) => (a.tripDate || '').localeCompare(b.tripDate || ''));
-  }, [tripList]);
+  }, [currentDateKey, tripList]);
   
 
   // Modals & Feedback
@@ -1142,16 +1143,39 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
   })();
 
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 60_000);
-    return () => clearInterval(timer);
+    const refreshCurrentTime = () => {
+      setNow(Date.now());
+      const nextDateKey = getCurrentDateKey();
+      const previousDateKey = currentDateKeyRef.current;
+      if (nextDateKey === previousDateKey) return;
+
+      const wasShowingToday = selectedDateRef.current === previousDateKey;
+      currentDateKeyRef.current = nextDateKey;
+      setCurrentDateKey(nextDateKey);
+      if (wasShowingToday) {
+        selectedDateRef.current = nextDateKey;
+        setSelectedDate(nextDateKey);
+        setCalendarMonth(getCurrentCalendarMonth());
+      }
+    };
+    const timer = setInterval(refreshCurrentTime, 60_000);
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') refreshCurrentTime();
+    });
+
+    return () => {
+      clearInterval(timer);
+      subscription.remove();
+    };
   }, []);
+
+  useEffect(() => {
+    selectedDateRef.current = selectedDate;
+  }, [selectedDate]);
 
   useEffect(() => () => {
     if (recommendationPollRef.current) clearInterval(recommendationPollRef.current);
     if (homeNoticeTimerRef.current) clearTimeout(homeNoticeTimerRef.current);
-    const cacheSessionId = imageCacheSessionRef.current;
-    imageCacheSessionRef.current = null;
-    if (cacheSessionId) void clearCourseSpotImageCache(cacheSessionId).catch(() => undefined);
   }, []);
 
   const showHomeNotice = (message: string) => {
@@ -1163,16 +1187,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
     }, 3600);
   };
 
-  const releaseCourseImageCacheSession = () => {
-    const cacheSessionId = imageCacheSessionRef.current;
-    imageCacheSessionRef.current = null;
-    spotImageContextRef.current = null;
-    spotImageContextExpiresAtRef.current = 0;
-    if (cacheSessionId) void clearCourseSpotImageCache(cacheSessionId).catch(() => undefined);
-  };
-
   const resetCourseCreation = () => {
-    releaseCourseImageCacheSession();
     courseCreationGenerationRef.current += 1;
     if (recommendationPollRef.current) {
       clearInterval(recommendationPollRef.current);
@@ -1209,9 +1224,6 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
     setExcludeFilters([]);
     setCourses([]);
     setSelectedCourse(null);
-    setSpotImages({});
-    setSpotImageStatuses({});
-    setRecommendationLoadingStage('course');
     setExpandedCourseId(1);
     setIsSubmitting(false);
     setDuplicateCoursePromptOpen(false);
@@ -1352,108 +1364,6 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
     setCurrentTripId(activeTrip.id);
   }, [activeTrip]);
 
-  useEffect(() => {
-    const isCourseDetailVisible = flow === 'courseDetail' || (tab === 'course' && selectedCourse !== null);
-    if (!isCourseDetailVisible || !selectedCourse || selectedCourse.spots.length === 0) return;
-
-    const hasConfirmedImageSnapshot = selectedCourse.spots.every((spot) => Array.isArray(spot.imageUrls));
-    if (hasConfirmedImageSnapshot) {
-      const snapshotImages = Object.fromEntries(selectedCourse.spots.map((spot) => [
-        spot.id,
-        (spot.imageUrls ?? []).filter((url) => typeof url === 'string' && url.length > 0).slice(0, 3),
-      ]));
-      setSpotImages(snapshotImages);
-      setSpotImageStatuses(Object.fromEntries(selectedCourse.spots.map((spot) => [
-        spot.id,
-        snapshotImages[spot.id].length > 0 ? 'loaded' as const : 'unavailable' as const,
-      ])));
-      return;
-    }
-
-    const cacheSessionId = imageCacheSessionRef.current
-      ?? (currentTripId ? `trip-${currentTripId}` : createImageCacheSessionId('course-view'));
-    const sameImageContext = spotImageContextRef.current === cacheSessionId
-      && spotImageContextExpiresAtRef.current > Date.now();
-    const allImagesPrepared = sameImageContext && selectedCourse.spots.every((spot) => {
-      const status = spotImageStatuses[spot.id];
-      return status === 'loaded' || status === 'unavailable';
-    });
-    if (allImagesPrepared) return;
-
-    let cancelled = false;
-    spotImageContextRef.current = cacheSessionId;
-    spotImageContextExpiresAtRef.current = Date.now() + IMAGE_CACHE_SESSION_TTL_MS;
-    if (!sameImageContext) setSpotImages({});
-    setSpotImageStatuses((current) => ({
-      ...(sameImageContext ? current : {}),
-      ...Object.fromEntries(selectedCourse.spots.map((spot) => [spot.id, 'loading' as const])),
-    }));
-    const loadSpotImages = async () => {
-      const requestSpots = selectedCourse.spots.map((spot) => {
-        const longitude = spot.map_x == null || spot.map_x === '' ? undefined : Number(spot.map_x);
-        const latitude = spot.map_y == null || spot.map_y === '' ? undefined : Number(spot.map_y);
-        return {
-          id: spot.id,
-          name: spot.name,
-          category: spot.category,
-          ...(longitude !== undefined && Number.isFinite(longitude) ? { longitude } : {}),
-          ...(latitude !== undefined && Number.isFinite(latitude) ? { latitude } : {}),
-        };
-      });
-
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        try {
-          const results = await searchCourseSpotImages(requestSpots, cacheSessionId);
-          if (cancelled) return;
-
-          const resultBySpotId = new Map(results.map((result) => [result.spotId, result.images]));
-          const imagesBySpot = Object.fromEntries(selectedCourse.spots.map((spot) => [
-            spot.id,
-            (resultBySpotId.get(spot.id) ?? [])
-              .map((image) => image.thumbnailUrl || image.imageUrl)
-              .filter(Boolean),
-          ]));
-          setSpotImages(imagesBySpot);
-          setSpotImageStatuses(Object.fromEntries(selectedCourse.spots.map((spot) => [spot.id, 'loaded' as const])));
-          if (tab === 'course' && currentTripId) {
-            const imageUrlsBySpotId = Object.fromEntries(selectedCourse.spots.map((spot) => [
-              String(spot.id),
-              imagesBySpot[spot.id] ?? [],
-            ]));
-            void saveTripImageSnapshot(currentTripId, imageUrlsBySpotId)
-              .then((updatedTrip) => {
-                setTripList((previous) => previous.map((trip) => trip.id === updatedTrip.id ? updatedTrip : trip));
-              })
-              .catch(() => undefined);
-          }
-          return;
-        } catch {
-          if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
-        }
-      }
-
-      if (!cancelled) {
-        setSpotImages({});
-        setSpotImageStatuses(Object.fromEntries(selectedCourse.spots.map((spot) => [spot.id, 'unavailable' as const])));
-      }
-    };
-
-    void loadSpotImages();
-
-    return () => { cancelled = true; };
-  }, [currentTripId, flow, selectedCourse, tab]);
-
-  const renderSpotImages = (spot: CourseSpot) => {
-    const status = spotImageStatuses[spot.id];
-    if (status === 'unavailable') return null;
-    const urls = spotImages[spot.id] ?? [];
-    if (status !== 'loaded') {
-      return <View style={styles.imageLoadingBox}><ActivityIndicator size="small" color="#5B44E8" /><Text style={styles.imageLoadingText}>사진을 불러오는 중이에요</Text></View>;
-    }
-    if (urls.length === 0) return null;
-    return <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, marginTop: 12 }}>{urls.map((url, imageIndex) => <Image key={`${spot.id}-${imageIndex}`} source={{ uri: url }} style={styles.spotGalleryImage} contentFit="cover" transition={180} />)}</ScrollView>;
-  };
-
   const handleSelectGame = (game: Game) => {
     if (game.date < currentDateKey) {
       showHomeNotice('날짜가 지난 경기의 코스는 생성할 수 없습니다');
@@ -1511,21 +1421,13 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
   };
 
   const handleCreateCourseRequest = async () => {
-    releaseCourseImageCacheSession();
-    const imageCacheSessionId = createImageCacheSessionId('course-generation');
-    imageCacheSessionRef.current = imageCacheSessionId;
-    spotImageContextRef.current = imageCacheSessionId;
-    spotImageContextExpiresAtRef.current = Date.now() + IMAGE_CACHE_SESSION_TTL_MS;
     const creationGeneration = courseCreationGenerationRef.current;
     if (recommendationPollRef.current) {
       clearInterval(recommendationPollRef.current);
       recommendationPollRef.current = null;
     }
     setIsSubmitting(true);
-    setRecommendationLoadingStage('course');
     setCourses([]);
-    setSpotImages({});
-    setSpotImageStatuses({});
     setExpandedCourseId(1);
 
     try {
@@ -1615,56 +1517,6 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                   };
                 });
 
-                setRecommendationLoadingStage('images');
-                const allCourseSpots = mappedCourses.flatMap((course) => course.spots);
-                setSpotImageStatuses(Object.fromEntries(
-                  allCourseSpots.map((spot) => [spot.id, 'loading' as const]),
-                ));
-
-                try {
-                  const requestSpots = allCourseSpots.map((spot) => {
-                    const longitude = spot.map_x == null || spot.map_x === '' ? undefined : Number(spot.map_x);
-                    const latitude = spot.map_y == null || spot.map_y === '' ? undefined : Number(spot.map_y);
-                    return {
-                      id: spot.id,
-                      name: spot.name,
-                      category: spot.category,
-                      ...(longitude !== undefined && Number.isFinite(longitude) ? { longitude } : {}),
-                      ...(latitude !== undefined && Number.isFinite(latitude) ? { latitude } : {}),
-                    };
-                  });
-                  let imageResults: Awaited<ReturnType<typeof searchCourseSpotImages>> = [];
-                  let imagesLoaded = false;
-                  for (let attempt = 0; attempt < 3; attempt += 1) {
-                    try {
-                      imageResults = await searchCourseSpotImages(requestSpots, imageCacheSessionId);
-                      imagesLoaded = true;
-                      break;
-                    } catch {
-                      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
-                    }
-                  }
-                  if (!imagesLoaded) throw new Error('장소 이미지를 준비하지 못했습니다.');
-                  if (creationGeneration !== courseCreationGenerationRef.current) return;
-
-                  const resultBySpotId = new Map(imageResults.map((result) => [result.spotId, result.images]));
-                  setSpotImages(Object.fromEntries(allCourseSpots.map((spot) => [
-                    spot.id,
-                    (resultBySpotId.get(spot.id) ?? [])
-                      .map((image) => image.thumbnailUrl || image.imageUrl)
-                      .filter(Boolean),
-                  ])));
-                  setSpotImageStatuses(Object.fromEntries(
-                    allCourseSpots.map((spot) => [spot.id, 'loaded' as const]),
-                  ));
-                } catch {
-                  if (creationGeneration !== courseCreationGenerationRef.current) return;
-                  setSpotImages({});
-                  setSpotImageStatuses(Object.fromEntries(
-                    allCourseSpots.map((spot) => [spot.id, 'unavailable' as const]),
-                  ));
-                }
-
                 setCourses(mappedCourses);
               } else {
                 Alert.alert('오류', '코스 목록이 비어있습니다.');
@@ -1673,7 +1525,6 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
             } catch (parseError) {
               console.error("❌ JSON 파싱 에러:", parseError);
               Alert.alert('오류', 'AI 서버 응답을 해석할 수 없습니다.');
-              releaseCourseImageCacheSession();
             }
             setIsSubmitting(false);
 
@@ -1681,7 +1532,6 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
             clearInterval(pollInterval);
             if (recommendationPollRef.current === pollInterval) recommendationPollRef.current = null;
             Alert.alert('추천 실패', '코스 생성 중 오류가 발생했습니다');
-            releaseCourseImageCacheSession();
             setIsSubmitting(false);
           }
         } catch (pollError) {
@@ -1692,7 +1542,6 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
     } catch (error) {
       console.error("❌ [요청 시작 에러]:", error);
       Alert.alert('설문 저장 실패', error instanceof Error ? error.message : '설문을 저장하지 못했습니다.');
-      releaseCourseImageCacheSession();
       setIsSubmitting(false);
     }
   };
@@ -1701,21 +1550,12 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
     if (!selectedCourse) return;
     setIsSubmitting(true);
     try {
-      const confirmedCourse: Course = {
-        ...selectedCourse,
-        spots: selectedCourse.spots.map((spot) => ({
-          ...spot,
-          imageUrls: Array.from(new Set(spotImages[spot.id] ?? []))
-            .filter((url) => typeof url === 'string' && url.length > 0)
-            .slice(0, 3),
-        })),
-      };
       const trip = await createTrip({
         stadium: selectedGame?.stadium ?? '수원 KT위즈파크',
         matchName: selectedGame ? `${selectedGame.home} vs ${selectedGame.away}` : undefined,
         tripDate: selectedGame?.date,
         courseTitle: selectedCourse.title,
-        course: confirmedCourse,
+        course: selectedCourse,
       });
       setCurrentTripId(trip.id);
       setTripList((previous) => [trip, ...previous]);
@@ -1736,10 +1576,6 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
       setTripList((previous) => previous.map((trip) => trip.id === updated.id ? updated : trip));
       setSelectedCourse(null);
       setCurrentTripId(null);
-      setSpotImages({});
-      setSpotImageStatuses({});
-      spotImageContextRef.current = null;
-      spotImageContextExpiresAtRef.current = 0;
       setFlow('feedbackDone');
     } catch (error) {
       Alert.alert('피드백 실패', error instanceof Error ? error.message : '피드백을 저장하지 못했습니다.');
@@ -1955,8 +1791,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                         <TouchableOpacity
                           style={styles.todayBtn}
                           onPress={() => {
-                            const now = new Date();
-                            setCalendarMonth(new Date(now.getFullYear(), now.getMonth(), 1));
+                            setCalendarMonth(getCurrentCalendarMonth());
                             setSelectedDate(currentDateKey);
                             setGameViewMode('all');
                           }}
@@ -2592,7 +2427,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                 </View>
 
                   <ScrollView style={styles.flex1} contentContainerStyle={{ padding: 20, gap: 16 }}>
-                  {courses.length === 0 && isSubmitting && <View style={styles.aiEmptyCard}><ActivityIndicator size="large" color="#5B44E8" /><Text style={{ marginTop: 12, fontSize: 14, fontWeight: '800', color: '#374151' }}>추천코스 생성 중입니다</Text><Text style={{ marginTop: 4, fontSize: 12, color: '#6B7280', textAlign: 'center' }}>{recommendationLoadingStage === 'images' ? '조금만 더 기다려주세요' : '조건에 맞는 장소와 이동 동선을 찾는 중이에요.'}</Text></View>}
+                  {courses.length === 0 && isSubmitting && <View style={styles.aiEmptyCard}><ActivityIndicator size="large" color="#5B44E8" /><Text style={{ marginTop: 12, fontSize: 14, fontWeight: '800', color: '#374151' }}>추천코스 생성 중입니다</Text><Text style={{ marginTop: 4, fontSize: 12, color: '#6B7280', textAlign: 'center' }}>조건에 맞는 장소와 이동 동선을 찾는 중이에요.</Text></View>}
                   {courses.length === 0 && !isSubmitting && <View style={styles.aiEmptyCard}><View style={styles.aiEmptyIcon}><Route size={28} color="#5B44E8" strokeWidth={1.9} /></View><Text style={{ marginTop: 10, fontSize: 14, fontWeight: '800', color: '#374151' }}>추천 코스를 불러오지 못했어요</Text><Text style={{ marginTop: 4, fontSize: 12, color: '#6B7280' }}>홈으로 돌아가 다시 시도해주세요.</Text></View>}
                   {courses.map((course, index) => {
                     const safeId = course.id ?? index;
@@ -2943,14 +2778,6 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                 <Text style={styles.timelineItemDescGreyNew}>
                   추천 테마: {category || '장소'}
                 </Text>
-
-                {(
-                  category.includes('음식') ||
-                  category.includes('맛집') ||
-                  category.includes('카페') ||
-                  category.includes('관광') ||
-                  category.includes('쇼핑')
-                ) && renderSpotImages(spot)}
 
               </View>
             </TouchableOpacity>
@@ -3371,15 +3198,6 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                 </Text>
 
 
-                {/* 장소 이미지 */}
-                {(
-                  category.includes('음식') ||
-                  category.includes('맛집') ||
-                  category.includes('카페') ||
-                  category.includes('관광') ||
-                  category.includes('쇼핑')
-                ) && renderSpotImages(spot)}
-
               </View>
 
                           </TouchableOpacity>
@@ -3519,7 +3337,7 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
             ) : myPageSection === 'account' ? (
               <View style={styles.flex1}><View style={styles.subPageHeader}><TouchableOpacity onPress={() => setMyPageSection('menu')}><ArrowLeft size={20} color="#6B7280" /></TouchableOpacity><Text style={styles.subPageTitle}>계정 관리</Text><View style={{ width: 20 }} /></View><ScrollView style={styles.flex1} contentContainerStyle={styles.subPageContent}><View style={styles.accountAvatarPreview}><View style={[styles.accountAvatarCircle, { backgroundColor: selectedBgColor.hex }]}><Text style={{ fontSize: 42 }}>{selectedMascot.emoji}</Text></View></View><Text style={styles.accountFieldLabel}>사용자 계정</Text><TextInput value={profile.email} editable={false} style={[styles.accountInput, styles.accountInputDisabled]} /><Text style={styles.accountFieldLabel}>닉네임</Text><TextInput value={accountNicknameDraft} onChangeText={setAccountNicknameDraft} style={styles.accountInput} placeholder="닉네임" maxLength={50} /><Text style={styles.accountFieldLabel}>비밀번호 변경</Text><TextInput value={accountCurrentPassword} onChangeText={setAccountCurrentPassword} secureTextEntry style={styles.accountInput} placeholder="현재 비밀번호" /><TextInput value={accountNewPassword} onChangeText={setAccountNewPassword} secureTextEntry style={styles.accountInput} placeholder="새 비밀번호 (8자 이상)" /><View style={{ marginTop: 14 }}><TouchableOpacity style={[styles.purpleBtn, (!accountHasChanges || isSubmitting) && styles.disabledPurpleBtn]} onPress={handleAccountSave} disabled={!accountHasChanges || isSubmitting}>{isSubmitting ? <ActivityIndicator color="#FFF" /> : <Text style={styles.purpleBtnText}>저장</Text>}</TouchableOpacity></View></ScrollView></View>
             ) : myPageSection === 'teams' ? (
-              <View style={styles.flex1}><View style={styles.subPageHeader}><TouchableOpacity onPress={() => setMyPageSection('menu')}><ArrowLeft size={20} color="#6B7280" /></TouchableOpacity><Text style={styles.subPageTitle}>내 구단 설정</Text><View style={{ width: 20 }} /></View><ScrollView style={styles.flex1} contentContainerStyle={styles.subPageContent}><Text style={styles.subPageSectionTitle}>관심 구단 등록</Text><Text style={styles.subPageDescription}>경기 일정 별도 확인을 위해 관심 구단을 등록해주세요.{`\n`}종목당 최대 3개까지 등록할 수 있어요.</Text><View style={styles.subPageDivider} /><Text style={styles.subPageSectionTitle}>등록된 구단</Text>{favoriteTeams.length === 0 ? <View style={styles.emptyPreferenceCard}><Text style={{ fontSize: 22 }}>🏟️</Text><Text style={styles.emptyPreferenceTitle}>아직 등록된 구단이 없어요.</Text><Text style={styles.emptyPreferenceText}>관심 있는 구단을 등록해주세요.</Text></View> : favoriteTeams.map((team) => <View key={`${team.sport}-${team.teamName}`} style={styles.registeredTeamCard}><View style={{ flex: 1 }}><Text style={styles.registeredTeamName}>{team.teamName}</Text>{team.nickname ? <Text style={styles.registeredTeamNickname}>{team.nickname}</Text> : null}</View><TouchableOpacity style={styles.deleteTeamBtn} onPress={async () => { try { const saved = await replaceFavoriteTeams(favoriteTeams.filter((item) => !(item.sport === team.sport && item.teamName === team.teamName))); setFavoriteTeams(saved); } catch (error) { Alert.alert('삭제 실패', error instanceof Error ? error.message : '구단을 삭제하지 못했습니다.'); } }}><Text style={styles.deleteTeamText}>삭제</Text></TouchableOpacity></View>)}<TouchableOpacity style={styles.purpleBtn} onPress={() => { setFavoriteTeamDraftSport('baseball'); setFavoriteTeamDraftName(''); setFavoriteTeamDraftNickname(''); setFavoriteTeamModalOpen(true); }}><Text style={styles.purpleBtnText}>+ 관심 구단 등록하기</Text></TouchableOpacity></ScrollView></View>
+              <View style={styles.flex1}><View style={styles.subPageHeader}><TouchableOpacity onPress={() => setMyPageSection('menu')}><ArrowLeft size={20} color="#6B7280" /></TouchableOpacity><Text style={styles.subPageTitle}>내 구단 설정</Text><View style={{ width: 20 }} /></View><ScrollView style={styles.flex1} contentContainerStyle={styles.subPageContent}><Text style={styles.subPageSectionTitle}>관심 구단 등록</Text><Text style={styles.subPageDescription}>경기 일정 별도 확인을 위해 관심 구단을 등록해주세요.{`\n`}종목당 최대 3개까지 등록할 수 있어요.</Text><View style={styles.subPageDivider} /><Text style={styles.subPageSectionTitle}>등록된 구단</Text>{favoriteTeams.length === 0 ? <View style={styles.emptyPreferenceCard}><Text style={styles.emptyPreferenceTitle}>아직 등록된 구단이 없어요.</Text><Text style={styles.emptyPreferenceText}>관심 있는 구단을 등록해주세요.</Text></View> : favoriteTeams.map((team) => <View key={`${team.sport}-${team.teamName}`} style={styles.registeredTeamCard}><View style={{ flex: 1 }}><Text style={styles.registeredTeamName}>{team.teamName}</Text>{team.nickname ? <Text style={styles.registeredTeamNickname}>{team.nickname}</Text> : null}</View><TouchableOpacity style={styles.deleteTeamBtn} onPress={async () => { try { const saved = await replaceFavoriteTeams(favoriteTeams.filter((item) => !(item.sport === team.sport && item.teamName === team.teamName))); setFavoriteTeams(saved); } catch (error) { Alert.alert('삭제 실패', error instanceof Error ? error.message : '구단을 삭제하지 못했습니다.'); } }}><Text style={styles.deleteTeamText}>삭제</Text></TouchableOpacity></View>)}<TouchableOpacity style={styles.purpleBtn} onPress={() => { setFavoriteTeamDraftSport('baseball'); setFavoriteTeamDraftName(''); setFavoriteTeamDraftNickname(''); setFavoriteTeamModalOpen(true); }}><Text style={styles.purpleBtnText}>+ 관심 구단 등록하기</Text></TouchableOpacity></ScrollView></View>
             ) : myPageSection === 'trips' ? (
               <View style={styles.flex1}><View style={styles.subPageHeader}><TouchableOpacity onPress={() => setMyPageSection('menu')}><ArrowLeft size={20} color="#6B7280" /></TouchableOpacity><Text style={styles.subPageTitle}>과거 여행 리스트</Text><View style={{ width: 20 }} /></View><ScrollView style={styles.flex1} contentContainerStyle={styles.subPageContent}><Text style={styles.subPageSectionTitle}>과거 여행 코스</Text><Text style={styles.subPageDescription}>완주한 코스를 다시 보고, 원하지 않는 기록은 삭제할 수 있어요.</Text>{completedTripList.length === 0 ? <View style={styles.emptyHistoryPanel}><Text style={styles.emptyHistoryText}>아직 완료한 여행이 없어요!</Text></View> : completedTripList.map((trip) => <TouchableOpacity key={trip.id} style={styles.historyCourseCard} onPress={() => setSelectedHistoryTrip(trip)}><View style={styles.historyIcon}><MapPinned size={22} color="#5B44E8" strokeWidth={1.9} /></View><View style={{ flex: 1 }}><Text style={styles.historyCourseTitle}>{trip.courseTitle ?? '추천 여행 코스'}</Text><Text style={styles.historyCourseRoute}>{trip.stadium}{trip.matchName ? ` · ${trip.matchName}` : ''}</Text><View style={styles.historyMetaRow}><Text style={styles.historyMeta}>{trip.tripDate ?? new Date(trip.createdAt).toLocaleDateString()}</Text><Text style={styles.historyRating}>★ {trip.rating ?? '-'}</Text></View></View><ChevronRight size={18} color="#9CA3AF" /></TouchableOpacity>)}</ScrollView></View>
             ) : (
@@ -3584,6 +3402,26 @@ export function MainApp({ onLogout, initialUser }: { onLogout: () => void; initi
                         </View>
                       </View>
                     )}
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.supportCard} onPress={() => router.push('/terms' as never)}>
+                    <View style={styles.supportCardHeader}>
+                      <Text style={{ fontSize: 24 }}>📄</Text>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.supportTitle}>서비스 이용약관</Text>
+                        <Text style={styles.supportText}>서비스 이용 조건과 권리·의무를 확인합니다.</Text>
+                      </View>
+                      <ChevronRight size={18} color="#6B7280" />
+                    </View>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.supportCard} onPress={() => router.push('/privacy' as never)}>
+                    <View style={styles.supportCardHeader}>
+                      <Text style={{ fontSize: 24 }}>🔒</Text>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.supportTitle}>개인정보 처리방침</Text>
+                        <Text style={styles.supportText}>수집 항목, 이용 목적과 삭제 방법을 확인합니다.</Text>
+                      </View>
+                      <ChevronRight size={18} color="#6B7280" />
+                    </View>
                   </TouchableOpacity>
                 </ScrollView>
               </View>
@@ -4365,7 +4203,7 @@ const styles = StyleSheet.create({
 
   mascotPreviewBox: { backgroundColor: '#F1F5F9', paddingVertical: 24, borderRadius: 20, alignItems: 'center' },
   mascotCircleLarge: { width: 100, height: 100, borderRadius: 50, justifyContent: 'center', alignItems: 'center', borderWidth: 4, borderColor: '#FFF' },
-  mascotGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  mascotGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 10 },
   mascotGridCard: { width: '23%', height: 86, borderRadius: 16, backgroundColor: '#FFF', justifyContent: 'center', alignItems: 'center', gap: 4, borderWidth: 1, borderColor: '#F1F5F9', position: 'relative' },
   mascotGridCardActive: { borderColor: '#5B44E8', backgroundColor: '#EEF2FF', borderWidth: 2 },
   mascotGridText: { fontSize: 11, color: '#6B7280' },
@@ -4480,9 +4318,6 @@ const styles = StyleSheet.create({
 
   mockImageRect: { width: 100, height: 100, borderRadius: 12, backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#E2E8F0' },
   mockImageRectSmall: { width: 88, height: 64, borderRadius: 10, backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#E2E8F0' },
-  spotGalleryImage: { width: 122, height: 88, borderRadius: 10, backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#E2E8F0' },
-  imageLoadingBox: { height: 52, marginTop: 12, borderRadius: 10, backgroundColor: '#F8FAFC', alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8 },
-  imageLoadingText: { color: '#9CA3AF', fontSize: 11 },
   moveInfoBox: { marginTop: 12, padding: 12, backgroundColor: '#F8FAFC', borderRadius: 10, borderWidth: 1, borderColor: '#F1F5F9' },
   moveInfoText: { fontSize: 12, color: '#6B7280', fontWeight: '600' },
 

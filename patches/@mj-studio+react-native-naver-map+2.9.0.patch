@@ -1,0 +1,23 @@
+diff --git a/node_modules/@mj-studio/react-native-naver-map/android/src/main/java/com/mjstudio/reactnativenavermap/mapview/RNCNaverMapViewManager.kt b/node_modules/@mj-studio/react-native-naver-map/android/src/main/java/com/mjstudio/reactnativenavermap/mapview/RNCNaverMapViewManager.kt
+index c92093f..309cf32 100644
+--- a/node_modules/@mj-studio/react-native-naver-map/android/src/main/java/com/mjstudio/reactnativenavermap/mapview/RNCNaverMapViewManager.kt
++++ b/node_modules/@mj-studio/react-native-naver-map/android/src/main/java/com/mjstudio/reactnativenavermap/mapview/RNCNaverMapViewManager.kt
+@@ -156,14 +156,16 @@ class RNCNaverMapViewManager(
+   override fun getChildAt(
+     parent: RNCNaverMapViewWrapper,
+     index: Int,
+-  ): View? = parent.mapView?.overlays?.get(index)
++  ): View? = parent.mapView?.overlays?.getOrNull(index)
+ 
+   override fun removeViewAt(
+     parent: RNCNaverMapViewWrapper,
+     index: Int,
+   ) {
+     parent.withMapView {
+-      it.removeOverlay(index)
++      if (index in it.overlays.indices) {
++        it.removeOverlay(index)
++      }
+     }
+   }
+ 

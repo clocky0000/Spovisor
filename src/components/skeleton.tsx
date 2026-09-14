@@ -9,7 +9,7 @@ export interface SkeletonProps
 }
 
 function Skeleton({ className, style, ...props }: SkeletonProps) {
-  const pulseAnim = React.useRef(new Animated.Value(0.4)).current;
+  const [pulseAnim] = React.useState(() => new Animated.Value(0.4));
 
   React.useEffect(() => {
     const pulse = Animated.loop(

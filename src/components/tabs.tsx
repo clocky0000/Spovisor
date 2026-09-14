@@ -191,7 +191,7 @@ function TabsContent({
 
   return (
     <View
-      accessibilityRole="tabpanel"
+      accessibilityLabel={`${contentValue} tab panel`}
       className={cn("flex-1 mt-1", className)}
       style={style}
       {...props}

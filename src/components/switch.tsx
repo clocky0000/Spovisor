@@ -32,7 +32,7 @@ function Switch({
   const isChecked = controlledChecked !== undefined ? controlledChecked : uncontrolledChecked;
 
   // 썸(Thumb)의 X축 이동 애니메이션 값 (0: unchecked, 1: checked)
-  const animValue = React.useRef(new Animated.Value(isChecked ? 1 : 0)).current;
+  const [animValue] = React.useState(() => new Animated.Value(isChecked ? 1 : 0));
 
   React.useEffect(() => {
     Animated.timing(animValue, {

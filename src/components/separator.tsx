@@ -21,8 +21,8 @@ function Separator({
 
   return (
     <View
-      accessibilityRole={decorative ? undefined : "separator"}
-      accessibilityState={decorative ? undefined : { orientation }}
+      accessible={!decorative}
+      accessibilityLabel={decorative ? undefined : `${orientation} separator`}
       className={cn(
         "bg-gray-200 dark:bg-gray-800 shrink-0",
         isHorizontal ? "h-px w-full" : "h-full w-px",

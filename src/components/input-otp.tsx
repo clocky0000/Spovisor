@@ -104,7 +104,7 @@ function InputOTP({
           editable={!disabled}
           onFocus={() => setIsFocused(true)}
           onBlur={() => setIsFocused(false)}
-          aria-hidden="true"
+          aria-hidden={true}
           className="absolute w-full h-full opacity-0 z-10"
         />
         <View className={cn("flex-row items-center gap-2", disabled && "opacity-50", className)}>
